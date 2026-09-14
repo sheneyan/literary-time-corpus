@@ -247,6 +247,23 @@ def test_extract_rejects_tampered_normalized_hash_without_output(run_ltc, tmp_pa
     assert not output.exists()
 
 
+def test_extract_preserves_preexisting_output_when_input_is_invalid(
+    run_ltc, tmp_path: Path
+) -> None:
+    normalized = normalized_fixture(run_ltc, tmp_path)
+    document = json.loads(normalized.read_text(encoding="utf-8"))
+    document["analysisText"] += "tampered"
+    normalized.write_text(json.dumps(document), encoding="utf-8")
+    output = tmp_path / "candidates.jsonl"
+    prior_output = b"keep this exact output\n"
+    output.write_bytes(prior_output)
+
+    result = run_ltc("extract", "--input", normalized, "--output", output)
+
+    assert result.returncode == 2
+    assert output.read_bytes() == prior_output
+
+
 def test_extract_rejects_source_hash_inconsistent_with_source_identity(run_ltc, tmp_path: Path) -> None:
     normalized = normalized_fixture(run_ltc, tmp_path)
     document = json.loads(normalized.read_text(encoding="utf-8"))

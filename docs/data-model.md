@@ -6,10 +6,29 @@ The model must preserve exact source text, reproduce every transformation,
 separate automated conclusions from human decisions, and prevent ambiguous or
 insufficiently cleared candidates from entering a release.
 
-The first implementation should use UTF-8 JSON Lines for manifests, candidates,
-and review events, validated by versioned JSON Schemas. JSON property order is
-not semantically significant; generated artifacts must nevertheless use a
-stable serialization for deterministic hashes and diffs.
+The Gate 2 implementation uses UTF-8 JSON for normalized sources, validation
+inputs, release projections, and reports, and UTF-8 JSON Lines for candidates.
+The CLI validates the current record shapes and version identifiers. Published
+versioned JSON Schema files remain future work and are required before real
+source acquisition. JSON property order is not semantically significant;
+generated artifacts nevertheless use a stable serialization for deterministic
+hashes and diffs.
+
+## Implemented Gate 2 versions
+
+The synthetic CLI currently emits or accepts these schema and version fields:
+
+| Record | `schemaVersion` | Additional version fields |
+| --- | --- | --- |
+| normalized source | `normalized-source-v1` | `normalizationVersion=normalize-v1` |
+| candidate | `time-candidate-v1` | `extractionVersion=extract-v1`; carries `normalizationVersion` |
+| review input | `time-review-v1` | human-supplied review metadata |
+| rights input | `rights-decision-v1` | `policyVersion=rights-policy-v1`; `targetUseProfile=zi5-public-corpus-v1` |
+| release projection | `time-release-v1` | `releaseVersion=release-v1`; carries normalization, extraction, and rights-policy versions |
+| report | `candidate-report-v1` | `reportVersion=report-v1`; carries `candidateSchemaVersion` |
+
+This version table describes only the locally verified synthetic interface. It
+is not an acquisition manifest or a dataset publication specification.
 
 ## Entity boundaries
 
@@ -79,6 +98,16 @@ Required semantics:
 - contextual resolution method and exact evidence span, if any; and
 - automated exclusion or warning reason codes.
 
+The Gate 2 candidate also emits
+`sourceHashStatus="carried-from-normalization"`. This means extraction checked
+the normalized document's analysis-text hash and the consistency of its
+synthetic `sourceId` with the carried `sourceSha256`; it did **not** have the
+untouched source bytes available to recompute that source hash. Release
+validation likewise verifies candidates against the supplied normalized
+analysis snapshot, not against a downloaded ebook. Real-source acquisition
+must retain and independently verify the untouched source snapshot before this
+status can support a release decision.
+
 `candidateId` is the lowercase hexadecimal SHA-256 of the UTF-8 encoding of:
 
 ```text
@@ -112,6 +141,12 @@ A deterministic projection of a candidate and its effective approved reviews.
 It contains only fields approved for publication but retains source identity,
 hashes, match text segmentation, exact normalized minute, attribution, rights
 decision, and release version.
+
+The implemented `ltc validate` interface requires the normalized analysis
+snapshot explicitly through `--analysis`, as well as `--candidate`, `--review`,
+`--rights`, and `--output`. Validation recomputes the analysis hash and checks
+the candidate's UTF-8 byte spans against that snapshot before projecting a
+release record.
 
 ## Controlled vocabularies
 
@@ -192,3 +227,10 @@ releases/           separately approved public corpus packages
 No source ebook belongs in `manifests/`, `artifacts/`, or `releases/`. Before
 implementation begins, `.local/` must be ignored and an automated repository
 check must reject source ebooks and unapproved excerpt data.
+
+That repository check is now implemented for the current Gate 2 boundary. It
+examines tracked files without requiring a clean worktree, rejects likely ebook
+files in `manifests/`, `artifacts/`, and `releases/`, and rejects tracked JSON or
+JSONL excerpt artifacts in `releases/`. The last rule is intentionally absolute
+for now because Gate 4 has approved no public excerpt artifact; a future release
+approval process must replace it before any corpus package is committed.

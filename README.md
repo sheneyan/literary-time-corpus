@@ -5,8 +5,10 @@ per-record provenance and rights evidence.
 
 ## Status
 
-This project is in its feasibility-pilot stage. It does not yet publish a quote
-corpus. The first milestone is to measure how much of a 1,440-minute day can be
+This project is in its feasibility-pilot stage. The Gate 2 command-line
+pipeline is implemented and locally verified against synthetic fixtures only.
+It does not yet acquire Project Gutenberg ebooks or publish a quote corpus. The
+next empirical milestone is to measure how much of a 1,440-minute day can be
 covered by eligible English-language source texts, how reliably exact time
 expressions can be extracted, and how much human review is required.
 
@@ -34,8 +36,67 @@ The project will not ingest Project Gutenberg at scale, publish unreviewed
 excerpts, fill missing minutes with approximate text, or implement the
 Literature Clock user interface during the pilot.
 
+Passing the current test suite is evidence about the synthetic pipeline; it
+authorizes neither ebook acquisition nor publication. Those actions remain
+subject to the gates in the pilot design and rights policy.
+
 See the [project brief](docs/project-brief.md) for the confirmed scope, data
 semantics, evaluation requirements, and publication gates.
+
+## Local synthetic pipeline
+
+Python 3.11 or newer and [uv](https://docs.astral.sh/uv/) are required. Install
+the project and its development environment from the lockfile:
+
+```bash
+uv sync
+```
+
+The installed `ltc` command exposes four offline operations. These examples use
+only the repository's synthetic fixtures:
+
+```bash
+uv run ltc normalize \
+  --input tests/fixtures/normalize/valid.txt \
+  --output /tmp/ltc-normalized.json
+
+uv run ltc extract \
+  --input /tmp/ltc-normalized.json \
+  --output /tmp/ltc-candidates.jsonl
+
+uv run ltc validate \
+  --analysis tests/fixtures/validate/analysis.json \
+  --candidate tests/fixtures/validate/candidate.json \
+  --review tests/fixtures/validate/review.json \
+  --rights tests/fixtures/validate/rights.json \
+  --output /tmp/ltc-release.json
+
+uv run ltc report \
+  --input tests/fixtures/report/candidates.jsonl \
+  --output /tmp/ltc-report.json
+```
+
+`normalize`, `validate`, and `report` emit canonical JSON; `extract` emits
+canonical JSON Lines. Identical inputs produce byte-identical outputs. Expected
+input or invariant failures exit `2`; unexpected internal failures exit `1`.
+Both write exactly one JSON error object to stderr with `error.code`,
+`error.message`, and optional `error.details`. A failed command does not create
+or modify its requested output path.
+
+The implemented record and tool versions are:
+
+| Artifact | Schema version | Tool or policy version |
+| --- | --- | --- |
+| normalized source | `normalized-source-v1` | `normalize-v1` |
+| time candidate | `time-candidate-v1` | `extract-v1` plus the input normalization version |
+| human review input | `time-review-v1` | supplied review evidence |
+| rights input | `rights-decision-v1` | `rights-policy-v1`, profile `zi5-public-corpus-v1` |
+| release projection | `time-release-v1` | `release-v1` |
+| candidate report | `candidate-report-v1` | `report-v1` plus the candidate schema version |
+
+These identifiers describe the current executable contract. Published JSON
+Schema files are still future work and are required before real-source
+acquisition is approved.
 
 ## Documentation
 
@@ -63,5 +124,7 @@ the first data release, with per-record provenance and rights evidence. See
 
 ## Contributing
 
-The extraction pipeline and contribution workflow have not yet been approved.
-Please open an issue before submitting source texts or literary excerpts.
+The synthetic extraction pipeline is implemented, but the real-source
+contribution and publication workflows have not been approved. Please open an
+issue before submitting source texts or literary excerpts. Never commit source
+ebooks: local source and analysis files belong under ignored `.local/` paths.

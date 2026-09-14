@@ -135,7 +135,8 @@ Passing Gate 1 permits implementation planning, not ebook acquisition.
 
 ### Gate 2: pipeline approval
 
-A later implementation must demonstrate, using synthetic fixtures only:
+The command-line implementation now demonstrates locally, using synthetic
+fixtures only:
 
 - deterministic source hashing and IDs;
 - exact preservation of matched text;
@@ -144,9 +145,33 @@ A later implementation must demonstrate, using synthetic fixtures only:
 - false-positive filters; and
 - reproducible reports.
 
+Its installed public interface is `ltc normalize`, `ltc extract`, `ltc
+validate`, and `ltc report`. All commands are offline. Expected input and
+invariant failures exit `2`, unexpected internal failures exit `1`, and both
+use one structured JSON error on stderr without creating or modifying the
+requested output. The current schemas and versions are recorded in the
+[data model](data-model.md).
+
+The report's duplicate fraction is defined as:
+
+```text
+duplicateCandidateCount = resolvedCandidateCount - resolvedMinuteCount
+duplicateFraction = duplicateCandidateCount / resolvedCandidateCount
+```
+
+When `resolvedCandidateCount` is zero, `duplicateFraction` is `0.0`. These
+counts include every candidate classified `exact-minute-resolved` in the report
+input, regardless of review status; the report does not claim that those
+candidates are publishable.
+
 Passing Gate 2 is a technical prerequisite for acquisition. Actual acquisition
 also requires completed United States and China-mainland source screens, the
 approved UBTmini cache deployment, and the frozen 72-work allowlist.
+
+Current status: the Gate 2 implementation is complete and locally verified on
+synthetic data. This status is technical evidence only. It does not approve or
+authorize Project Gutenberg access, real ebook processing, UBTmini changes, or
+publication of any excerpt. Gates 3 and 4 remain unchanged and have not begun.
 
 ### Gate 3: pilot execution
 
