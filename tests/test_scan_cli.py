@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import getpass
 import hashlib
+import html
 import json
 import re
 import socket
@@ -31,25 +32,25 @@ def read_rows(destination: Path) -> list[dict[str, object]]:
 
 
 def candidate_with_context(
-    candidate: dict[str, object], context_before: str
+    candidate: dict[str, object], context_before: str, context_after: str = ""
 ) -> dict[str, object]:
     updated = dict(candidate)
     matched_text = updated["matchedText"]
     assert isinstance(matched_text, str)
-    context = context_before + matched_text
+    context = context_before + matched_text + context_after
     match_start = len(context_before.encode("utf-8"))
-    match_end = len(context.encode("utf-8"))
+    match_end = len((context_before + matched_text).encode("utf-8"))
     updated.update(
         {
             "context": context,
             "excerpt": context,
             "excerptStartByte": 0,
-            "excerptEndByte": match_end,
+            "excerptEndByte": len(context.encode("utf-8")),
             "matchStartByte": match_start,
             "matchEndByte": match_end,
             "quoteBefore": context_before,
             "quoteTime": matched_text,
-            "quoteAfter": "",
+            "quoteAfter": context_after,
         }
     )
     resolution = updated["contextualResolution"]
@@ -487,14 +488,18 @@ def test_review_renderer_falls_back_when_both_fence_delimiters_are_too_long(
 
     review = render_review_markdown([candidate], metadata).decode("utf-8")
 
-    assert "\n    # injected\n" in review
-    assert "\n# injected\n" not in review
+    expected_block = (
+        f"<pre><code>{html.escape(str(candidate['context']), quote=False)}"
+        "</code></pre>"
+    )
+    assert expected_block in review
+    assert "<h1>injected</h1>" not in review
     assert "`" * 256 not in review
     assert "~" * 256 not in review
     assert read_rows(destination)[0]["context"] == original["context"]
 
 
-def test_review_fallback_only_indents_markdown_line_endings(
+def test_review_html_fallback_preserves_non_markdown_separators(
     run_ltc, tmp_path: Path
 ) -> None:
     source = tmp_path / "book.txt"
@@ -515,15 +520,44 @@ def test_review_fallback_only_indents_markdown_line_endings(
 
     review = render_review_markdown([candidate], metadata).decode("utf-8")
 
-    expected = (
-        f"    {backticks}\r\n    {tildes}\r"
-        f"    before{non_markdown_separators}# preserved\n"
-        "    # injected\n"
-        "    13:15"
-    )
-    assert expected in review
-    assert f"{non_markdown_separators}    # preserved" not in review
+    escaped_context = html.escape(str(candidate["context"]), quote=False)
+    assert f"<pre><code>{escaped_context}</code></pre>" in review
+    assert html.unescape(escaped_context) == candidate["context"]
     assert read_rows(destination)[0]["context"] == original["context"]
+
+
+def test_review_html_fallback_preserves_boundary_newlines_and_blocks_injection(
+    run_ltc, tmp_path: Path
+) -> None:
+    source = tmp_path / "book.txt"
+    destination = tmp_path / "scan"
+    source.write_text("The bell rang at 13:15.\n", encoding="utf-8")
+    assert run_ltc("scan", source, "--output", destination).returncode == 0
+    original = read_rows(destination)[0]
+    context_before = (
+        "\r\n\n\r"
+        + "`" * 255
+        + "\n"
+        + "~" * 255
+        + "\n&raw</code></pre><h1>injected</h1>\n"
+    )
+    context_after = "\r\n\n\r\r\n"
+    candidate = candidate_with_context(original, context_before, context_after)
+    metadata = candidate["workMetadata"]
+    assert isinstance(metadata, dict)
+
+    review = render_review_markdown([candidate], metadata).decode("utf-8")
+
+    opening = "<pre><code>"
+    start = review.index(opening) + len(opening)
+    end = review.index("</code></pre>", start)
+    encoded_context = review[start:end]
+    assert html.unescape(encoded_context) == candidate["context"]
+    assert encoded_context.startswith("\r\n\n\r")
+    assert encoded_context.endswith("\r\n\n\r\r\n")
+    assert "&amp;raw" in encoded_context
+    assert "&lt;/code&gt;&lt;/pre&gt;&lt;h1&gt;injected&lt;/h1&gt;" in encoded_context
+    assert "<h1>injected</h1>" not in review
 
 
 def test_review_renderer_rejects_duplicate_candidate_ids(

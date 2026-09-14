@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import html
 import re
 import string
 import unicodedata
@@ -81,19 +82,7 @@ def _fenced_text(value: str) -> str:
     elif longest_tilde_run < MAX_FENCE_LENGTH:
         fence = "~" * max(3, longest_tilde_run + 1)
     else:
-        rendered = ["    "]
-        for index, character in enumerate(value):
-            rendered.append(character)
-            has_more = index + 1 < len(value)
-            if has_more and (
-                character == "\n"
-                or (
-                    character == "\r"
-                    and value[index + 1] != "\n"
-                )
-            ):
-                rendered.append("    ")
-        return "".join(rendered)
+        return f"<pre><code>{html.escape(value, quote=False)}</code></pre>"
     closing_prefix = "" if value.endswith("\n") else "\n"
     return f"{fence}text\n{value}{closing_prefix}{fence}"
 
