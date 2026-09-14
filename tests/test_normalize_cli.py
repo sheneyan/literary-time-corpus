@@ -521,6 +521,60 @@ def test_normalize_rejects_duplicate_markers(run_ltc, tmp_path: Path) -> None:
     assert not output.exists()
 
 
+def test_normalize_counts_overlapping_literal_marker_occurrences(
+    run_ltc, tmp_path: Path
+) -> None:
+    source = tmp_path / "overlapping.txt"
+    source.write_text("aaa\nBODY\nEND", encoding="utf-8")
+    output = tmp_path / "normalized.json"
+
+    result = run_ltc(
+        "normalize",
+        "--input",
+        source,
+        "--output",
+        output,
+        "--start-marker",
+        "aa",
+        "--end-marker",
+        "END",
+    )
+
+    assert result.returncode == 2
+    assert parse_error(result.stderr)["error"]["code"] == "invalid-markers"
+    assert not output.exists()
+
+
+@pytest.mark.parametrize(
+    ("start_marker", "end_marker"), [("", "END"), ("START", "")]
+)
+def test_normalize_explicitly_rejects_empty_literal_markers(
+    run_ltc, tmp_path: Path, start_marker: str, end_marker: str
+) -> None:
+    source = tmp_path / "empty-marker.txt"
+    source.write_text("START\nBODY\nEND", encoding="utf-8")
+    output = tmp_path / "normalized.json"
+
+    result = run_ltc(
+        "normalize",
+        "--input",
+        source,
+        "--output",
+        output,
+        "--start-marker",
+        start_marker,
+        "--end-marker",
+        end_marker,
+    )
+
+    assert result.returncode == 2
+    assert parse_error(result.stderr)["error"] == {
+        "code": "invalid-markers",
+        "message": "markers must not be empty",
+    }
+    assert not output.exists()
+
+
 def test_normalize_rejects_non_utf8_without_replacing_bytes(
     run_ltc, tmp_path: Path
 ) -> None:

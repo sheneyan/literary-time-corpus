@@ -228,6 +228,36 @@ def test_validate_requires_complete_exact_normalized_analysis_record(
     assert "invalid-analysis-document" in stderr_error(result)["details"]["violations"]
 
 
+def test_validate_rejects_shifted_full_file_bounds(run_ltc, tmp_path: Path) -> None:
+    analysis = load_fixture("analysis.json")
+    analysis["bodyStartByte"] = 1
+    analysis["bodyEndByte"] += 1
+    analysis["transformationLog"][0]["inputStartByte"] = 1
+    analysis["transformationLog"][0]["inputEndByte"] += 1
+
+    result, output = run_validate(run_ltc, tmp_path, analysis=analysis)
+
+    assert result.returncode == 2
+    assert "invalid-analysis-document" in stderr_error(result)["details"]["violations"]
+    assert not output.exists()
+
+
+@pytest.mark.parametrize("method", [[], {}])
+def test_validate_rejects_non_string_transformation_method(
+    run_ltc, tmp_path: Path, method: object
+) -> None:
+    analysis = load_fixture("analysis.json")
+    analysis["transformationLog"][0]["method"] = method
+
+    result, output = run_validate(run_ltc, tmp_path, analysis=analysis)
+
+    assert result.returncode == 2
+    error = stderr_error(result)
+    assert error["code"] == "release-validation-failed"
+    assert "invalid-analysis-document" in error["details"]["violations"]
+    assert not output.exists()
+
+
 def set_path(document: dict[str, Any], path: str, value: Any) -> None:
     parent: Any = document
     parts = path.split(".")

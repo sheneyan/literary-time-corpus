@@ -83,6 +83,7 @@ def normalized_record_violations(document: Any) -> list[str]:
         violations.append("invalid-transformationLog")
     else:
         entry = log[0]
+        method = entry.get("method")
         offsets = {
             field: _byte_offset(entry.get(field))
             for field in (
@@ -94,13 +95,25 @@ def normalized_record_violations(document: Any) -> list[str]:
         }
         if (
             set(entry) != TRANSFORMATION_FIELDS
-            or entry.get("method") not in TRANSFORMATION_METHODS
+            or not isinstance(method, str)
+            or method not in TRANSFORMATION_METHODS
             or any(value is None for value in offsets.values())
             or offsets["inputStartByte"] != body_start
             or offsets["inputEndByte"] != body_end
             or offsets["outputStartByte"] != 0
             or analysis_bytes is None
             or offsets["outputEndByte"] != len(analysis_bytes)
+            or (
+                method == FULL_FILE_TRANSFORMATION_METHOD
+                and (
+                    body_start != 0
+                    or body_end != len(analysis_bytes)
+                    or offsets["inputStartByte"] != 0
+                    or offsets["inputEndByte"] != len(analysis_bytes)
+                    or offsets["outputStartByte"] != 0
+                    or offsets["outputEndByte"] != len(analysis_bytes)
+                )
+            )
         ):
             violations.append("invalid-transformationLog")
 

@@ -22,6 +22,11 @@ class NormalizationError(ValueError):
         self.code = code
 
 
+def _occurs_exactly_once(source: bytes, marker: bytes) -> bool:
+    first = source.find(marker)
+    return first >= 0 and source.find(marker, first + 1) < 0
+
+
 def normalize_bytes(
     source: bytes,
     *,
@@ -51,9 +56,13 @@ def normalize_bytes(
             raise NormalizationError(
                 "invalid-markers", "markers must be valid UTF-8 text"
             ) from error
+        if not start_marker_bytes or not end_marker_bytes:
+            raise NormalizationError(
+                "invalid-markers", "markers must not be empty"
+            )
         if (
-            source.count(start_marker_bytes) != 1
-            or source.count(end_marker_bytes) != 1
+            not _occurs_exactly_once(source, start_marker_bytes)
+            or not _occurs_exactly_once(source, end_marker_bytes)
         ):
             raise NormalizationError(
                 "invalid-markers",

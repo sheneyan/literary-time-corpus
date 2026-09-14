@@ -4,6 +4,8 @@ import hashlib
 import json
 from pathlib import Path
 
+import pytest
+
 
 FIXTURE = Path(__file__).parent / "fixtures" / "extract" / "times.txt"
 
@@ -355,6 +357,40 @@ def test_extract_requires_complete_exact_normalized_record(run_ltc, tmp_path: Pa
         assert result.returncode == 2
         assert json.loads(result.stderr)["error"]["code"] == "invalid-normalized-source"
         assert not output.exists()
+
+
+def test_extract_rejects_shifted_full_file_bounds(run_ltc, tmp_path: Path) -> None:
+    normalized = normalized_fixture(run_ltc, tmp_path)
+    document = json.loads(normalized.read_text(encoding="utf-8"))
+    document["bodyStartByte"] = 1
+    document["bodyEndByte"] += 1
+    document["transformationLog"][0]["inputStartByte"] = 1
+    document["transformationLog"][0]["inputEndByte"] += 1
+    normalized.write_text(json.dumps(document), encoding="utf-8")
+    output = tmp_path / "candidates.jsonl"
+
+    result = run_ltc("extract", "--input", normalized, "--output", output)
+
+    assert result.returncode == 2
+    assert json.loads(result.stderr)["error"]["code"] == "invalid-normalized-source"
+    assert not output.exists()
+
+
+@pytest.mark.parametrize("method", [[], {}])
+def test_extract_rejects_non_string_transformation_method(
+    run_ltc, tmp_path: Path, method: object
+) -> None:
+    normalized = normalized_fixture(run_ltc, tmp_path)
+    document = json.loads(normalized.read_text(encoding="utf-8"))
+    document["transformationLog"][0]["method"] = method
+    normalized.write_text(json.dumps(document), encoding="utf-8")
+    output = tmp_path / "candidates.jsonl"
+
+    result = run_ltc("extract", "--input", normalized, "--output", output)
+
+    assert result.returncode == 2
+    assert json.loads(result.stderr)["error"]["code"] == "invalid-normalized-source"
+    assert not output.exists()
 
 
 def test_extract_rejects_nested_non_utf8_encodable_normalized_fields(
