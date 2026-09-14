@@ -105,10 +105,13 @@ final bytes of each artifact. `run.json` cannot and does not digest itself.
 Before publishing the staging directory, scan re-reads all five files. It
 validates the normalized record and every candidate through the shared
 validators; regenerates and compares the report, including its candidate-input
-hash and counts; recomputes the four artifact digests; and requires each
-candidate ID to occur exactly once in the Markdown review with the same total
-count. Any mismatch fails with `scan-verification-failed` at the `verification`
-stage, and the destination is not published.
+hash and counts; recomputes the four artifact digests; and regenerates the
+expected Markdown bytes from the validated candidates and manifest metadata.
+The deterministic renderer rejects duplicate candidate IDs and emits each
+candidate exactly once, while an incidental `Candidate ID:` phrase inside
+source context remains ordinary source text. Any byte mismatch fails with
+`scan-verification-failed` at the `verification` stage, and the destination is
+not published.
 
 The manifest contains no current working directory, absolute path, username,
 hostname, staging name, timestamp, locale, timezone, or environment value.

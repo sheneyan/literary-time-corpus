@@ -395,6 +395,56 @@ def test_scan_review_groups_candidates_and_renders_complete_safe_details(
     assert b"\r" not in review_bytes
 
 
+def test_scan_allows_candidate_id_label_text_inside_source(
+    run_ltc, tmp_path: Path
+) -> None:
+    source = tmp_path / "book.txt"
+    destination = tmp_path / "scan"
+    source.write_text(
+        "The words Candidate ID: appeared beside 13:15 in the source.\n",
+        encoding="utf-8",
+    )
+
+    result = run_ltc("scan", source, "--output", destination)
+
+    assert result.returncode == 0, result.stderr
+    candidates = read_rows(destination)
+    assert len(candidates) == 1
+    review = (destination / "review.md").read_text(encoding="utf-8")
+    assert "The words Candidate ID: appeared beside 13:15" in review
+    assert review.count(f"Candidate ID: `{candidates[0]['candidateId']}`") == 1
+
+
+def test_scan_rejects_tampered_staged_review_without_publishing(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    source = tmp_path / "book.txt"
+    destination = tmp_path / "scan"
+    source.write_text("The bell rang at 13:15.\n", encoding="utf-8")
+    verify_staging = scan_module._verify_staging
+
+    def tamper_then_verify(staging_path: Path, expected_run: dict[str, object]) -> None:
+        review_path = staging_path / "review.md"
+        review_path.write_bytes(review_path.read_bytes() + b"tampered\n")
+        artifact_digests = expected_run["artifactDigests"]
+        assert isinstance(artifact_digests, dict)
+        artifact_digests["review.md"] = scan_module.artifact_digest(review_path)
+        scan_module.write_json_atomic(staging_path / "run.json", expected_run)
+        verify_staging(staging_path, expected_run)
+
+    monkeypatch.setattr(scan_module, "_verify_staging", tamper_then_verify)
+
+    exit_code = main(["scan", str(source), "--output", str(destination)])
+    captured = capsys.readouterr()
+
+    assert exit_code == 2
+    assert captured.out == ""
+    error = json.loads(captured.err)["error"]
+    assert error["code"] == "scan-verification-failed"
+    assert error["details"] == {"stage": "verification"}
+    assert not destination.exists()
+
+
 def test_scan_review_renders_all_empty_sections(run_ltc, tmp_path: Path) -> None:
     source = tmp_path / "quiet.txt"
     destination = tmp_path / "scan"

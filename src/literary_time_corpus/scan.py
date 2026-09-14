@@ -272,7 +272,7 @@ def _verify_staging(
         candidate_bytes = (staging_path / "candidates.jsonl").read_bytes()
         candidates = [json.loads(line) for line in candidate_bytes.splitlines()]
         report = json.loads((staging_path / "report.json").read_bytes())
-        review = (staging_path / "review.md").read_text(encoding="utf-8")
+        review = (staging_path / "review.md").read_bytes()
         run = json.loads((staging_path / "run.json").read_bytes())
         regenerated_report = build_report(staging_path / "candidates.jsonl")
         digests = {
@@ -313,7 +313,10 @@ def _verify_staging(
         for candidate in candidates
         if candidate["precision"] == "exact-minute-resolved"
     }
-    candidate_ids = [candidate["candidateId"] for candidate in candidates]
+    try:
+        expected_review = render_review_markdown(candidates, metadata)
+    except (TypeError, ValueError):
+        raise _verification_failed() from None
     if (
         report.get("inputSha256")
         != hashlib.sha256(candidate_bytes).hexdigest()
@@ -321,8 +324,7 @@ def _verify_staging(
         or report.get("resolvedMinuteCount") != len(resolved_minutes)
         or run.get("candidateCount") != len(candidates)
         or run.get("resolvedMinuteCount") != len(resolved_minutes)
-        or review.count("Candidate ID:") != len(candidates)
-        or any(review.count(f"Candidate ID: `{candidate_id}`") != 1 for candidate_id in candidate_ids)
+        or review != expected_review
     ):
         raise _verification_failed()
 
