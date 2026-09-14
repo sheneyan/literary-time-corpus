@@ -229,8 +229,22 @@ implementation begins, `.local/` must be ignored and an automated repository
 check must reject source ebooks and unapproved excerpt data.
 
 That repository check is now implemented for the current Gate 2 boundary. It
-examines tracked files without requiring a clean worktree, rejects likely ebook
-files in `manifests/`, `artifacts/`, and `releases/`, and rejects tracked JSON or
-JSONL excerpt artifacts in `releases/`. The last rule is intentionally absolute
-for now because Gate 4 has approved no public excerpt artifact; a future release
-approval process must replace it before any corpus package is committed.
+examines the tracked Git index without requiring a clean worktree and applies
+these conventions:
+
+- binary ebook, document, HTML, and archive extensions are rejected throughout
+  the repository;
+- likely raw-text extensions such as `.txt`, `.text`, `.utf8`, and `.utf-8` are
+  rejected everywhere except small UTF-8 files under `tests/fixtures/` whose
+  content explicitly identifies them as synthetic and contains no copied
+  Project Gutenberg license boilerplate;
+- `manifests/` accepts committed metadata only as JSON, JSON Lines, or RDF, plus
+  root `README.md`/`.gitkeep` placeholders and strictly validated relative
+  ebook-path lists named `*-paths.txt`; and
+- while Gate 4 remains unopened, `releases/` accepts only root `README.md` and
+  `.gitkeep` placeholders. Every other tracked file is rejected regardless of
+  whether it uses JSON, CSV, TSV, NDJSON, a binary extension, or no extension.
+
+The release rule is intentionally absolute because Gate 4 has approved no
+public excerpt artifact. A future release approval process must replace it
+before any corpus package is committed.
