@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import ipaddress
 import os
+import re
 import shutil
 import stat
 import tempfile
+import unicodedata
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
@@ -29,6 +32,8 @@ ARTIFACT_NAMES = (
     "review.md",
     "run.json",
 )
+INVALID_PERCENT_ESCAPE = re.compile(r"%(?![0-9A-Fa-f]{2})")
+HOST_LABEL = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?")
 
 
 class ScanError(ValueError):
@@ -46,6 +51,57 @@ def _invalid_metadata() -> ScanError:
     )
 
 
+def _valid_hostname(hostname: str) -> bool:
+    if "%" in hostname:
+        return False
+    unqualified = hostname[:-1] if hostname.endswith(".") else hostname
+    if not unqualified:
+        return False
+    try:
+        ipaddress.ip_address(unqualified)
+        return True
+    except ValueError:
+        pass
+    try:
+        ascii_hostname = unqualified.encode("idna").decode("ascii")
+    except UnicodeError:
+        return False
+    if len(ascii_hostname) > 253:
+        return False
+    if all(character.isdigit() or character == "." for character in ascii_hostname):
+        return False
+    return all(
+        HOST_LABEL.fullmatch(label) is not None
+        for label in ascii_hostname.split(".")
+    )
+
+
+def _valid_source_url(source_url: str) -> bool:
+    if (
+        source_url != source_url.strip()
+        or any(
+            character.isspace()
+            or unicodedata.category(character).startswith("C")
+            for character in source_url
+        )
+        or INVALID_PERCENT_ESCAPE.search(source_url) is not None
+    ):
+        return False
+    try:
+        parsed = urlsplit(source_url)
+        hostname = parsed.hostname
+        parsed.port
+    except (UnicodeError, ValueError):
+        return False
+    return (
+        parsed.scheme.lower() in {"http", "https"}
+        and hostname is not None
+        and parsed.username is None
+        and parsed.password is None
+        and _valid_hostname(hostname)
+    )
+
+
 def build_work_metadata(
     input_path: Path,
     *,
@@ -58,20 +114,8 @@ def build_work_metadata(
     if author is not None and not author.strip():
         raise _invalid_metadata()
 
-    if source_url is not None:
-        try:
-            parsed = urlsplit(source_url)
-            hostname = parsed.hostname
-            parsed.port
-        except ValueError as error:
-            raise _invalid_metadata() from error
-        if (
-            parsed.scheme.lower() not in {"http", "https"}
-            or not hostname
-            or parsed.username is not None
-            or parsed.password is not None
-        ):
-            raise _invalid_metadata()
+    if source_url is not None and not _valid_source_url(source_url):
+        raise _invalid_metadata()
 
     metadata: dict[str, object] = {
         "author": author if author is not None else "unknown",

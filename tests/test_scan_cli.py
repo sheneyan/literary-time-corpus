@@ -208,6 +208,15 @@ def test_scan_basic_outputs_are_byte_deterministic(run_ltc, tmp_path: Path) -> N
         (("--source-url", "https:///book"), None),
         (("--source-url", "https://alice@example.org/book"), "alice"),
         (("--source-url", "https://alice:hunter2@example.org/book"), "hunter2"),
+        (("--source-url", " https://example.org/book"), None),
+        (("--source-url", "https://example.org/book "), None),
+        (("--source-url", "https://exa mple.org/book"), None),
+        (("--source-url", "https://example.org/book\nprivate"), "private"),
+        (("--source-url", "https://example.org/%zz"), None),
+        (("--source-url", "https://exa%6dple.org/book"), None),
+        (("--source-url", "https://[example.org/book"), None),
+        (("--source-url", "https://-bad.example/book"), None),
+        (("--source-url", "https://bad..example/book"), None),
     ],
 )
 def test_scan_rejects_invalid_metadata_without_output_or_credential_echo(
@@ -225,6 +234,9 @@ def test_scan_rejects_invalid_metadata_without_output_or_credential_echo(
     assert error["code"] == "invalid-scan-metadata"
     assert error["details"] == {"stage": "metadata"}
     assert not destination.exists()
+    supplied_value = arguments[1]
+    if supplied_value.strip():
+        assert supplied_value not in result.stderr
     if secret is not None:
         assert secret not in result.stderr
 
