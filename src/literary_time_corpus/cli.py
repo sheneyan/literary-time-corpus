@@ -49,7 +49,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         arguments = build_parser().parse_args(argv)
         if arguments.command == "normalize":
-            normalize_file(arguments.input, arguments.output)
+            try:
+                normalize_file(arguments.input, arguments.output)
+            except Exception:
+                arguments.output.unlink(missing_ok=True)
+                raise
             return 0
         raise CommandError("not-implemented", f"{arguments.command} is not implemented")
     except (CommandError, NormalizationError) as error:

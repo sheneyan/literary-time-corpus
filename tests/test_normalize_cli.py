@@ -92,6 +92,25 @@ def test_normalize_rejects_missing_start_marker(run_ltc, tmp_path: Path) -> None
     assert not output.exists()
 
 
+def test_normalize_removes_preexisting_output_when_input_is_invalid(
+    run_ltc, tmp_path: Path
+) -> None:
+    output = tmp_path / "normalized.json"
+    output.write_text("stale output", encoding="utf-8")
+
+    result = run_ltc(
+        "normalize",
+        "--input",
+        FIXTURES / "missing-start.txt",
+        "--output",
+        output,
+    )
+
+    assert result.returncode == 2
+    assert parse_error(result.stderr)["error"]["code"] == "invalid-markers"
+    assert not output.exists()
+
+
 def test_normalize_rejects_duplicate_markers(run_ltc, tmp_path: Path) -> None:
     source = tmp_path / "duplicate.txt"
     source.write_text(
