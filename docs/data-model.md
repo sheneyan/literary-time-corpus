@@ -253,10 +253,11 @@ mode, no trimming or line-ending conversion is performed.
 
 Both `ltc extract` and `ltc validate` use the same normalized-record validator.
 It accepts only `schemaVersion=normalized-source-v1` with
-`normalizationVersion=normalize-v1`; verifies the analysis hash and synthetic
-source-ID/hash relationship; and requires nonempty, internally consistent body
-bounds plus the exact one-entry transformation log described above. Missing,
-extra, or inconsistent transformation fields fail closed.
+`normalizationVersion=normalize-v1`; verifies the analysis hash and
+provider-neutral local source-ID/hash relationship; and requires nonempty,
+internally consistent body bounds plus the exact one-entry transformation log
+described above. Missing, extra, or inconsistent transformation fields fail
+closed.
 The normalizer runs this validator against its own generated record before any
 atomic write and rejects marker bodies that contain only Unicode whitespace.
 

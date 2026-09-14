@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import re
 import subprocess
 from pathlib import Path, PurePosixPath
 from typing import Mapping
@@ -157,6 +158,7 @@ def test_public_documentation_matches_local_scanner_path_and_identity_contract()
         in data_model
     )
     assert "synthetic `sourceId`" not in data_model
+    assert re.search(r"synthetic\s+source-ID", data_model) is None
     assert "### Future Project Gutenberg source snapshot" in data_model
 
 
