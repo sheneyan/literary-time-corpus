@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import stat
 import sys
 from pathlib import Path
 from typing import Sequence
@@ -45,14 +46,60 @@ def write_error(code: str, message: str, *, exit_code: int) -> int:
     return exit_code
 
 
+def validate_normalize_paths(input_path: Path, output_path: Path) -> None:
+    if output_path.is_symlink():
+        raise CommandError(
+            "unsafe-output-path", "output path must not be a symbolic link"
+        )
+
+    try:
+        paths_are_same = input_path.samefile(output_path)
+    except OSError:
+        paths_are_same = input_path.resolve(strict=False) == output_path.resolve(
+            strict=False
+        )
+    if paths_are_same:
+        raise CommandError(
+            "unsafe-output-path", "input and output must refer to different files"
+        )
+
+
+def regular_file_identity(path: Path) -> tuple[int, int] | None:
+    try:
+        metadata = path.lstat()
+    except OSError:
+        return None
+    if not stat.S_ISREG(metadata.st_mode):
+        return None
+    return metadata.st_dev, metadata.st_ino
+
+
+def remove_unchanged_regular_file(
+    path: Path, expected_identity: tuple[int, int] | None
+) -> None:
+    if expected_identity is None:
+        return
+    try:
+        metadata = path.lstat()
+        if stat.S_ISREG(metadata.st_mode) and (
+            metadata.st_dev,
+            metadata.st_ino,
+        ) == expected_identity:
+            path.unlink()
+    except OSError:
+        pass
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     try:
         arguments = build_parser().parse_args(argv)
         if arguments.command == "normalize":
+            validate_normalize_paths(arguments.input, arguments.output)
+            prior_output = regular_file_identity(arguments.output)
             try:
                 normalize_file(arguments.input, arguments.output)
             except Exception:
-                arguments.output.unlink(missing_ok=True)
+                remove_unchanged_regular_file(arguments.output, prior_output)
                 raise
             return 0
         raise CommandError("not-implemented", f"{arguments.command} is not implemented")

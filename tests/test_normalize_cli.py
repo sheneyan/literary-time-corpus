@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
+
+import pytest
 
 
 FIXTURES = Path(__file__).parent / "fixtures" / "normalize"
@@ -109,6 +112,87 @@ def test_normalize_removes_preexisting_output_when_input_is_invalid(
     assert result.returncode == 2
     assert parse_error(result.stderr)["error"]["code"] == "invalid-markers"
     assert not output.exists()
+
+
+@pytest.mark.parametrize("fixture_name", ["valid.txt", "missing-start.txt"])
+def test_normalize_rejects_same_input_and_output_without_mutating_source(
+    run_ltc, tmp_path: Path, fixture_name: str
+) -> None:
+    source = tmp_path / fixture_name
+    source.write_bytes((FIXTURES / fixture_name).read_bytes())
+    original = source.read_bytes()
+
+    result = run_ltc("normalize", "--input", source, "--output", source)
+
+    assert result.returncode == 2
+    assert parse_error(result.stderr) == {
+        "error": {
+            "code": "unsafe-output-path",
+            "message": "input and output must refer to different files",
+        }
+    }
+    assert source.read_bytes() == original
+
+
+def test_normalize_rejects_symlink_output_without_mutating_link_or_target(
+    run_ltc, tmp_path: Path
+) -> None:
+    target = tmp_path / "target.json"
+    target.write_text("target must survive", encoding="utf-8")
+    output = tmp_path / "normalized.json"
+    output.symlink_to(target)
+
+    result = run_ltc(
+        "normalize", "--input", FIXTURES / "valid.txt", "--output", output
+    )
+
+    assert result.returncode == 2
+    assert parse_error(result.stderr) == {
+        "error": {
+            "code": "unsafe-output-path",
+            "message": "output path must not be a symbolic link",
+        }
+    }
+    assert output.is_symlink()
+    assert target.read_text(encoding="utf-8") == "target must survive"
+
+
+def test_normalize_preserves_domain_error_and_directory_output(
+    run_ltc, tmp_path: Path
+) -> None:
+    output = tmp_path / "normalized.json"
+    output.mkdir()
+
+    result = run_ltc(
+        "normalize",
+        "--input",
+        FIXTURES / "missing-start.txt",
+        "--output",
+        output,
+    )
+
+    assert result.returncode == 2
+    assert parse_error(result.stderr)["error"]["code"] == "invalid-markers"
+    assert output.is_dir()
+
+
+def test_normalize_does_not_delete_non_regular_output_on_failure(
+    run_ltc, tmp_path: Path
+) -> None:
+    output = tmp_path / "normalized.json"
+    os.mkfifo(output)
+
+    result = run_ltc(
+        "normalize",
+        "--input",
+        FIXTURES / "missing-start.txt",
+        "--output",
+        output,
+    )
+
+    assert result.returncode == 2
+    assert parse_error(result.stderr)["error"]["code"] == "invalid-markers"
+    assert output.exists()
 
 
 def test_normalize_rejects_duplicate_markers(run_ltc, tmp_path: Path) -> None:
