@@ -516,7 +516,19 @@ def _make_private_container(
                 break
             except FileExistsError:
                 continue
+            except (NotImplementedError, TypeError) as error:
+                raise ScanError(
+                    "unsupported-safe-replacement",
+                    "safe replacement is unavailable on this platform",
+                    stage="publication",
+                ) from error
             except OSError as error:
+                if error.errno in {errno.ENOSYS, errno.ENOTSUP, errno.EINVAL}:
+                    raise ScanError(
+                        "unsupported-safe-replacement",
+                        "safe replacement is unavailable on this platform",
+                        stage="publication",
+                    ) from error
                 raise ScanError(
                     "invalid-output-path",
                     "could not create private transaction directory",
@@ -529,22 +541,33 @@ def _make_private_container(
                 stage="publication",
             )
         container = path.parent / container_name
-        try:
-            os.chmod(
-                container_name,
-                0o700,
-                dir_fd=parent_fd,
-                follow_symlinks=False,
-            )
-        except OSError as error:
-            setup_error = ScanError(
-                "invalid-output-path",
-                "could not secure private transaction directory",
-                stage="publication",
-            )
-            setup_error.details["retainedBackupBasename"] = container.name
-            setup_error.details["retentionScope"] = "original-parent"
-            raise setup_error from error
+        # mkdir's mode already prevents granting permissions beyond 0700.
+        # chmod is a defense-in-depth normalization only; platforms without
+        # its no-follow dir_fd form can still keep publication fd-anchored.
+        if (
+            os.chmod in os.supports_dir_fd
+            and os.chmod in os.supports_follow_symlinks
+        ):
+            try:
+                os.chmod(
+                    container_name,
+                    0o700,
+                    dir_fd=parent_fd,
+                    follow_symlinks=False,
+                )
+            except (NotImplementedError, TypeError):
+                pass
+            except OSError as error:
+                if error.errno in {errno.ENOSYS, errno.ENOTSUP, errno.EINVAL}:
+                    return container
+                setup_error = ScanError(
+                    "invalid-output-path",
+                    "could not secure private transaction directory",
+                    stage="publication",
+                )
+                setup_error.details["retainedBackupBasename"] = container.name
+                setup_error.details["retentionScope"] = "original-parent"
+                raise setup_error from error
         return container
     try:
         container = Path(
@@ -570,6 +593,18 @@ def _make_private_container(
         setup_error.details["retainedBackupBasename"] = container.name
         raise setup_error from error
     return container
+
+
+def _supports_anchored_no_replace() -> bool:
+    import ctypes
+    import sys
+
+    if os.name == "nt":
+        return False
+    libc = ctypes.CDLL(None, use_errno=True)
+    return (
+        sys.platform == "darwin" and hasattr(libc, "renameatx_np")
+    ) or hasattr(libc, "renameat2")
 
 
 def _rename_no_replace(
@@ -622,19 +657,19 @@ def _rename_no_replace(
 def _open_parent_descriptor(
     parent: Path,
     expected_identity: DirectoryIdentity,
+    *,
+    probe_no_replace: bool = False,
 ) -> int | None:
     required = (
-        os.open,
         os.rename,
         os.stat,
-        os.unlink,
-        os.rmdir,
         os.mkdir,
-        os.chmod,
     )
-    if not all(
-        function in os.supports_dir_fd for function in required
-    ) or os.chmod not in os.supports_follow_symlinks:
+    if (
+        not _supports_anchored_no_replace()
+        or not all(function in os.supports_dir_fd for function in required)
+        or os.stat not in os.supports_follow_symlinks
+    ):
         return None
     try:
         descriptor = os.open(
@@ -664,7 +699,114 @@ def _open_parent_descriptor(
             "output parent changed before transaction",
             stage="publication",
         )
+    if probe_no_replace and not _probe_anchored_no_replace(
+        parent,
+        descriptor,
+        expected_identity,
+    ):
+        os.close(descriptor)
+        return None
     return descriptor
+
+
+def _remove_anchored_probe(
+    parent: Path,
+    parent_fd: int,
+    parent_identity: DirectoryIdentity,
+    name: str,
+) -> None:
+    if os.rmdir in os.supports_dir_fd:
+        try:
+            os.rmdir(name, dir_fd=parent_fd)
+            return
+        except (NotImplementedError, TypeError):
+            pass
+        except OSError as error:
+            if error.errno not in {errno.ENOSYS, errno.ENOTSUP, errno.EINVAL}:
+                raise
+    if not _directory_matches_identity(parent, parent_identity):
+        error = ScanError(
+            "invalid-output-path",
+            "could not clean safe replacement capability probe",
+            stage="publication",
+        )
+        error.details["retainedPathBasename"] = name
+        error.details["retentionScope"] = "original-parent"
+        raise error
+    # This fallback removes only our empty random probe after an immediate
+    # parent identity check; it is independent of old-tree cleanup support.
+    (parent / name).rmdir()
+
+
+def _probe_anchored_no_replace(
+    parent: Path,
+    parent_fd: int,
+    parent_identity: DirectoryIdentity,
+) -> bool:
+    source_name = ""
+    for _ in range(100):
+        token = secrets.token_hex(8)
+        source_name = f".scan.probe-{token}-source"
+        try:
+            os.mkdir(source_name, mode=0o700, dir_fd=parent_fd)
+            break
+        except FileExistsError:
+            continue
+        except (NotImplementedError, TypeError):
+            return False
+        except OSError as error:
+            if error.errno in {errno.ENOSYS, errno.ENOTSUP, errno.EINVAL}:
+                return False
+            raise ScanError(
+                "invalid-output-path",
+                "could not test safe replacement capability",
+                stage="publication",
+            ) from error
+    else:
+        raise ScanError(
+            "invalid-output-path",
+            "could not test safe replacement capability",
+            stage="publication",
+        )
+    destination_name = f".scan.probe-{token}-destination"
+    current_name = source_name
+    try:
+        _rename_no_replace(
+            Path(source_name),
+            Path(destination_name),
+            src_dir_fd=parent_fd,
+            dst_dir_fd=parent_fd,
+        )
+        current_name = destination_name
+    except (NotImplementedError, TypeError):
+        _remove_anchored_probe(
+            parent,
+            parent_fd,
+            parent_identity,
+            current_name,
+        )
+        return False
+    except OSError as error:
+        _remove_anchored_probe(
+            parent,
+            parent_fd,
+            parent_identity,
+            current_name,
+        )
+        if error.errno in {errno.ENOSYS, errno.ENOTSUP, errno.EINVAL}:
+            return False
+        raise ScanError(
+            "invalid-output-path",
+            "could not test safe replacement capability",
+            stage="publication",
+        ) from error
+    _remove_anchored_probe(
+        parent,
+        parent_fd,
+        parent_identity,
+        current_name,
+    )
+    return True
 
 
 def _relative_to_parent(path: Path, parent: Path) -> Path:
@@ -725,6 +867,28 @@ def _entry_status_at_anchor(
     except OSError:
         return "unknown"
     return "present"
+
+
+def _entry_matches_identity_at_anchor(
+    path: Path,
+    parent: Path,
+    parent_fd: int,
+    expected_identity: DirectoryIdentity | None,
+) -> bool:
+    if expected_identity is None:
+        return False
+    try:
+        status = os.stat(
+            _relative_to_parent(path, parent),
+            dir_fd=parent_fd,
+            follow_symlinks=False,
+        )
+    except OSError:
+        return False
+    return (
+        stat.S_ISDIR(status.st_mode)
+        and (status.st_dev, status.st_ino) == expected_identity
+    )
 
 
 def _remove_directory_contents(directory_fd: int) -> None:
@@ -1149,6 +1313,17 @@ def scan_file(
             "output parent changed before staging",
             stage="publication",
         )
+    parent_fd: int | None = _open_parent_descriptor(
+        output_path.parent,
+        output_parent_identity,
+        probe_no_replace=existing_target is not None,
+    )
+    if existing_target is not None and parent_fd is None:
+        raise ScanError(
+            "unsupported-safe-replacement",
+            "safe replacement is unavailable on this platform",
+            stage="publication",
+        )
     try:
         staging_path = Path(
             tempfile.mkdtemp(
@@ -1156,6 +1331,8 @@ def scan_file(
             )
         )
     except OSError as error:
+        if parent_fd is not None:
+            os.close(parent_fd)
         raise ScanError(
             "invalid-output-path",
             "could not create output directory",
@@ -1167,7 +1344,6 @@ def scan_file(
     old_target_moved = False
     new_target_published = False
     backup_finalized = False
-    parent_fd: int | None = None
     try:
         created_directory_identity = _directory_identity(staging_path)
         if not _directory_matches_identity(
@@ -1203,11 +1379,6 @@ def scan_file(
                 "output parent changed before publication",
                 stage="publication",
             )
-
-        parent_fd = _open_parent_descriptor(
-            output_path.parent,
-            output_parent_identity,
-        )
 
         if existing_target is not None:
             if not _target_still_matches(output_path, existing_target):
@@ -1369,6 +1540,20 @@ def scan_file(
             "status": "complete",
         }
     except Exception as caught_error:
+        if (
+            isinstance(caught_error, ScanError)
+            and caught_error.code == "unsupported-safe-replacement"
+            and not old_target_moved
+            and not new_target_published
+        ):
+            retention = _retain_path_entry_in_quarantine(
+                staging_path,
+                created_directory_identity,
+                parent_fd=None,
+                parent_identity=output_parent_identity,
+            )
+            _attach_retention(caught_error, retention)
+            raise
         if backup_finalized and new_target_published:
             parent_path_status = _anchored_parent_status(
                 output_path.parent,
@@ -1457,11 +1642,25 @@ def scan_file(
                     error.details["retainedBackupBasename"] = backup_container.name
 
         if not new_target_published:
+            staging_parent_fd = parent_fd
+            if (
+                parent_fd is not None
+                and not _entry_matches_identity_at_anchor(
+                    staging_path,
+                    output_path.parent,
+                    parent_fd,
+                    created_directory_identity,
+                )
+            ):
+                # The parent pathname changed while the path-based staging
+                # directory was being created. Retain that actual entry beside
+                # the replacement pathname; it is not reachable via our anchor.
+                staging_parent_fd = None
             try:
                 retention = _retain_path_entry_in_quarantine(
                     staging_path,
                     created_directory_identity,
-                    parent_fd=parent_fd,
+                    parent_fd=staging_parent_fd,
                     parent_identity=output_parent_identity,
                 )
             except ScanError as cleanup_error:

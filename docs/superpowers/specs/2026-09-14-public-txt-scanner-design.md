@@ -134,8 +134,16 @@ error. The command never merges into it or overwrites individual files.
 `--force` authorizes replacement of that exact output directory. The command
 still generates and verifies the complete new directory first. Cross-platform
 Python cannot atomically replace an existing non-empty directory, so the tool
-uses a guarded same-parent transaction: rename the old directory to a unique
-backup, rename the verified new directory into place, then remove the backup.
+uses a guarded same-parent transaction where the platform supports opening and
+operating relative to an anchored parent directory: rename the old directory
+to a unique backup, rename the verified new directory into place, then remove
+the backup. Support for optional chmod and descriptor-based recursive cleanup
+is evaluated separately and does not disable this publication anchor. If the
+required anchored open, stat, mkdir, or rename operations are unavailable,
+forced replacement fails closed with `unsupported-safe-replacement` before a
+staging directory is created; it does not fall back to a destructive pathname
+transaction. Creating a previously absent output remains supported through the
+portable guarded pathname flow.
 If the second rename fails, it restores the backup before returning an error.
 There may be a brief interval in which the output pathname is absent, but it
 must never expose a partially generated directory. Replacement must not follow

@@ -895,6 +895,16 @@ def test_force_cleanup_never_deletes_replaced_backup_child(
         return status
 
     monkeypatch.setattr(scan_module.os, "stat", replace_child_after_snapshot)
+    monkeypatch.setattr(
+        scan_module.os,
+        "supports_dir_fd",
+        {*scan_module.os.supports_dir_fd, replace_child_after_snapshot},
+    )
+    monkeypatch.setattr(
+        scan_module.os,
+        "supports_follow_symlinks",
+        {*scan_module.os.supports_follow_symlinks, replace_child_after_snapshot},
+    )
 
     exit_code = main(["scan", str(source), "--output", str(output), "--force"])
     captured = capsys.readouterr()
@@ -932,7 +942,7 @@ def test_force_falls_back_when_descriptor_listing_is_unsupported(
     assert sorted(entry.name for entry in tmp_path.iterdir()) == ["book.txt", "scan"]
 
 
-def test_force_falls_back_when_parent_descriptor_open_is_unsupported(
+def test_force_refuses_replacement_when_parent_descriptor_open_is_unsupported(
     tmp_path: Path, monkeypatch, capsys
 ) -> None:
     source = tmp_path / "book.txt"
@@ -957,8 +967,129 @@ def test_force_falls_back_when_parent_descriptor_open_is_unsupported(
     exit_code = main(["scan", str(source), "--output", str(output), "--force"])
     captured = capsys.readouterr()
 
+    assert exit_code == 2
+    error = json.loads(captured.err)["error"]
+    assert error["code"] == "unsupported-safe-replacement"
+    assert error["details"] == {"stage": "publication"}
+    assert tree_bytes(output) == {"keep": b"old"}
+    assert sorted(entry.name for entry in tmp_path.iterdir()) == ["book.txt", "scan"]
+
+
+def test_new_output_remains_supported_without_parent_descriptor_anchor(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    source = tmp_path / "book.txt"
+    output = tmp_path / "scan"
+    source.write_text("At 13:15.", encoding="utf-8")
+    open_function = scan_module.os.open
+
+    def reject_parent_descriptor(path, *args, **kwargs):
+        if Path(path) == tmp_path:
+            raise OSError(errno.ENOTSUP, "parent descriptors unavailable")
+        return open_function(path, *args, **kwargs)
+
+    monkeypatch.setattr(scan_module.os, "open", reject_parent_descriptor)
+    monkeypatch.setattr(
+        scan_module.os,
+        "supports_dir_fd",
+        {*scan_module.os.supports_dir_fd, reject_parent_descriptor},
+    )
+
+    exit_code = main(["scan", str(source), "--output", str(output)])
+    captured = capsys.readouterr()
+
+    assert exit_code == 0, captured.err
+    assert json.loads(captured.out)["status"] == "complete"
+    assert {entry.name for entry in output.iterdir()} == ARTIFACTS
+
+
+def test_force_refuses_replacement_without_anchored_exclusive_rename(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    source = tmp_path / "book.txt"
+    output = tmp_path / "scan"
+    source.write_text("At 13:15.", encoding="utf-8")
+    output.mkdir()
+    (output / "keep").write_bytes(b"old")
+    monkeypatch.setattr(
+        scan_module,
+        "_supports_anchored_no_replace",
+        lambda: False,
+        raising=False,
+    )
+
+    exit_code = main(["scan", str(source), "--output", str(output), "--force"])
+    captured = capsys.readouterr()
+
+    assert exit_code == 2
+    assert json.loads(captured.err)["error"]["code"] == (
+        "unsupported-safe-replacement"
+    )
+    assert tree_bytes(output) == {"keep": b"old"}
+    assert sorted(entry.name for entry in tmp_path.iterdir()) == ["book.txt", "scan"]
+
+
+def test_force_refuses_before_staging_when_anchored_rename_rejects_at_runtime(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    source = tmp_path / "book.txt"
+    output = tmp_path / "scan"
+    source.write_text("At 13:15.", encoding="utf-8")
+    output.mkdir()
+    (output / "keep").write_bytes(b"old")
+    rename_function = scan_module._rename_no_replace
+
+    def reject_probe_rename(source_path, destination_path, **kwargs):
+        if ".probe-" in Path(source_path).name:
+            raise OSError(errno.ENOTSUP, "exclusive rename unavailable")
+        return rename_function(source_path, destination_path, **kwargs)
+
+    monkeypatch.setattr(scan_module, "_rename_no_replace", reject_probe_rename)
+
+    exit_code = main(["scan", str(source), "--output", str(output), "--force"])
+    captured = capsys.readouterr()
+
+    assert exit_code == 2
+    error = json.loads(captured.err)["error"]
+    assert error["code"] == "unsupported-safe-replacement"
+    assert error["details"] == {"stage": "publication"}
+    assert tree_bytes(output) == {"keep": b"old"}
+    assert sorted(entry.name for entry in tmp_path.iterdir()) == ["book.txt", "scan"]
+
+
+def test_force_ignores_runtime_unsupported_optional_chmod(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    source = tmp_path / "book.txt"
+    output = tmp_path / "scan"
+    source.write_text("At 13:15.", encoding="utf-8")
+    output.mkdir()
+    (output / "keep").write_bytes(b"old")
+    chmod_function = scan_module.os.chmod
+
+    def reject_anchored_chmod(path, mode, *args, **kwargs):
+        if kwargs.get("dir_fd") is not None:
+            raise NotImplementedError("chmod no-follow dir_fd unavailable")
+        return chmod_function(path, mode, *args, **kwargs)
+
+    monkeypatch.setattr(scan_module.os, "chmod", reject_anchored_chmod)
+    monkeypatch.setattr(
+        scan_module.os,
+        "supports_dir_fd",
+        {*scan_module.os.supports_dir_fd, reject_anchored_chmod},
+    )
+    monkeypatch.setattr(
+        scan_module.os,
+        "supports_follow_symlinks",
+        {*scan_module.os.supports_follow_symlinks, reject_anchored_chmod},
+    )
+
+    exit_code = main(["scan", str(source), "--output", str(output), "--force"])
+    captured = capsys.readouterr()
+
     assert exit_code == 0, captured.err
     assert {entry.name for entry in output.iterdir()} == ARTIFACTS
+    assert sorted(entry.name for entry in tmp_path.iterdir()) == ["book.txt", "scan"]
 
 
 def test_force_uses_path_cleanup_when_directory_open_is_unsupported(
@@ -977,6 +1108,11 @@ def test_force_uses_path_cleanup_when_directory_open_is_unsupported(
         return open_function(path, *args, **kwargs)
 
     monkeypatch.setattr(scan_module.os, "open", reject_backup_directory_open)
+    monkeypatch.setattr(
+        scan_module.os,
+        "supports_dir_fd",
+        {*scan_module.os.supports_dir_fd, reject_backup_directory_open},
+    )
 
     exit_code = main(["scan", str(source), "--output", str(output), "--force"])
     captured = capsys.readouterr()
@@ -1004,6 +1140,11 @@ def test_force_selects_path_cleanup_for_windows_directory_open_semantics(
         scan_module, "_requires_path_cleanup", lambda: True, raising=False
     )
     monkeypatch.setattr(scan_module.os, "open", reject_windows_directory_open)
+    monkeypatch.setattr(
+        scan_module.os,
+        "supports_dir_fd",
+        {*scan_module.os.supports_dir_fd, reject_windows_directory_open},
+    )
 
     exit_code = main(["scan", str(source), "--output", str(output), "--force"])
     captured = capsys.readouterr()
@@ -1012,23 +1153,139 @@ def test_force_selects_path_cleanup_for_windows_directory_open_semantics(
     assert {entry.name for entry in output.iterdir()} == ARTIFACTS
 
 
-@pytest.mark.parametrize("operation", ["mkdir", "chmod"])
-def test_force_falls_back_when_container_dir_fd_operation_is_unsupported(
-    tmp_path: Path, monkeypatch, capsys, operation: str
+def test_force_refuses_replacement_when_anchored_container_creation_is_unsupported(
+    tmp_path: Path, monkeypatch, capsys
 ) -> None:
     source = tmp_path / "book.txt"
     output = tmp_path / "scan"
     source.write_text("At 13:15.", encoding="utf-8")
     output.mkdir()
     (output / "keep").write_bytes(b"old")
-    original = getattr(scan_module.os, operation)
+    monkeypatch.setattr(
+        scan_module.os,
+        "supports_dir_fd",
+        {
+            function
+            for function in scan_module.os.supports_dir_fd
+            if function is not scan_module.os.mkdir
+        },
+    )
 
-    def reject_dir_fd(*args, **kwargs):
+    exit_code = main(["scan", str(source), "--output", str(output), "--force"])
+    captured = capsys.readouterr()
+
+    assert exit_code == 2
+    assert json.loads(captured.err)["error"]["code"] == (
+        "unsupported-safe-replacement"
+    )
+    assert tree_bytes(output) == {"keep": b"old"}
+    assert sorted(entry.name for entry in tmp_path.iterdir()) == ["book.txt", "scan"]
+
+
+def test_force_reports_retained_staging_when_anchored_mkdir_rejects_at_runtime(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    source = tmp_path / "book.txt"
+    output = tmp_path / "scan"
+    source.write_text("At 13:15.", encoding="utf-8")
+    output.mkdir()
+    (output / "keep").write_bytes(b"old")
+    mkdir_function = scan_module.os.mkdir
+
+    def reject_anchored_mkdir(path, *args, **kwargs):
         if kwargs.get("dir_fd") is not None:
-            raise NotImplementedError(f"{operation} dir_fd unavailable")
-        return original(*args, **kwargs)
+            raise NotImplementedError("mkdir dir_fd unavailable at runtime")
+        return mkdir_function(path, *args, **kwargs)
 
-    monkeypatch.setattr(scan_module.os, operation, reject_dir_fd)
+    monkeypatch.setattr(scan_module.os, "mkdir", reject_anchored_mkdir)
+    monkeypatch.setattr(
+        scan_module.os,
+        "supports_dir_fd",
+        {*scan_module.os.supports_dir_fd, reject_anchored_mkdir},
+    )
+
+    exit_code = main(["scan", str(source), "--output", str(output), "--force"])
+    captured = capsys.readouterr()
+
+    assert exit_code == 2
+    error = json.loads(captured.err)["error"]
+    assert error["code"] == "unsupported-safe-replacement"
+    assert error["details"] == {"stage": "publication"}
+    assert tree_bytes(output) == {"keep": b"old"}
+    assert sorted(entry.name for entry in tmp_path.iterdir()) == ["book.txt", "scan"]
+
+
+def test_force_keeps_parent_anchor_without_chmod_follow_symlinks_support(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    source = tmp_path / "book.txt"
+    parent = tmp_path / "parent"
+    moved_parent = tmp_path / "moved-parent"
+    parent.mkdir()
+    output = parent / "scan"
+    source.write_text("At 13:15.", encoding="utf-8")
+    output.mkdir()
+    (output / "keep").write_bytes(b"old")
+    original_mkdir = scan_module.os.mkdir
+    swapped = False
+
+    def swap_during_anchored_backup(path, *args, **kwargs):
+        nonlocal swapped
+        result = original_mkdir(path, *args, **kwargs)
+        if (
+            kwargs.get("dir_fd") is not None
+            and ".backup-" in str(path)
+            and not swapped
+        ):
+            swapped = True
+            parent.rename(moved_parent)
+            parent.mkdir()
+        return result
+
+    monkeypatch.setattr(scan_module.os, "mkdir", swap_during_anchored_backup)
+    monkeypatch.setattr(
+        scan_module.os,
+        "supports_dir_fd",
+        {*scan_module.os.supports_dir_fd, swap_during_anchored_backup},
+    )
+    monkeypatch.setattr(
+        scan_module.os,
+        "supports_follow_symlinks",
+        {
+            function
+            for function in scan_module.os.supports_follow_symlinks
+            if function is not scan_module.os.chmod
+        },
+    )
+
+    exit_code = main(["scan", str(source), "--output", str(output), "--force"])
+    captured = capsys.readouterr()
+
+    assert exit_code == 2
+    error = json.loads(captured.err)["error"]
+    assert error["details"]["parentPathStatus"] == "replaced"
+    assert error["details"]["retentionScope"] == "original-parent"
+    assert tree_bytes(moved_parent / "scan") == {"keep": b"old"}
+    assert not output.exists()
+
+
+def test_force_anchor_does_not_require_descriptor_relative_child_open(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    source = tmp_path / "book.txt"
+    output = tmp_path / "scan"
+    source.write_text("At 13:15.", encoding="utf-8")
+    output.mkdir()
+    (output / "keep").write_bytes(b"old")
+    monkeypatch.setattr(
+        scan_module.os,
+        "supports_dir_fd",
+        {
+            function
+            for function in scan_module.os.supports_dir_fd
+            if function is not scan_module.os.open
+        },
+    )
 
     exit_code = main(["scan", str(source), "--output", str(output), "--force"])
     captured = capsys.readouterr()

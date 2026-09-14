@@ -124,6 +124,15 @@ program-controlled publication window; they cannot cryptographically prevent a
 same-user process from modifying an artifact after scan has successfully
 exited.
 
+Replacing an existing scan directory additionally requires a platform capable
+of anchoring publication operations to an opened parent directory. The
+capability check covers the anchored open, stat, private-directory creation,
+and no-replace rename operations used by the transaction; optional chmod and
+recursive-cleanup facilities are selected independently. When the publication
+anchor is unavailable, `scan --force` fails before staging with
+`unsupported-safe-replacement` and preserves the existing directory exactly.
+This restriction does not apply when the requested output path is absent.
+
 Failed generation and failed post-publication verification use safe retention,
 not in-process deletion or restoration. Scan creates a unique same-parent
 quarantine directory with mode `0700`, atomically renames the current staging or
