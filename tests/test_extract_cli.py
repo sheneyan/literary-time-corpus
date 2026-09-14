@@ -96,23 +96,48 @@ def test_extract_marks_bare_clock_ambiguous_and_approximation_non_releaseable(
 
 
 def test_extract_does_not_release_false_positive_numeric_shapes(run_ltc, tmp_path: Path) -> None:
-    _document, rows, _output = extract_fixture(run_ltc, tmp_path)
+    document, rows, _output = extract_fixture(run_ltc, tmp_path)
 
-    false_positive_shapes = ("2026-09-14", "$1:30", "3:16", "1:30 hours")
+    analysis = document["analysisText"]
+    false_positive_shapes = (
+        "2026-09-14",
+        "$1:30",
+        "John 3:16",
+        "chapter 13:15",
+        "1:30 hours",
+    )
     for shape in false_positive_shapes:
-        containing = [row for row in rows if shape in str(row["matchedText"])]
-        assert all(row["status"] == "automatically-excluded" for row in containing)
+        character_start = analysis.index(shape)
+        start = len(analysis[:character_start].encode("utf-8"))
+        end = start + len(shape.encode("utf-8"))
+        overlapping = [
+            row
+            for row in rows
+            if row["matchStartByte"] < end and row["matchEndByte"] > start
+        ]
+        assert all(row["status"] == "automatically-excluded" for row in overlapping), (
+            shape,
+            overlapping,
+        )
 
-    releaseable = [
+
+def test_extract_keeps_sentence_initial_numeric_24_hour_time(run_ltc, tmp_path: Path) -> None:
+    document, rows, _output = extract_fixture(run_ltc, tmp_path)
+
+    analysis = document["analysisText"]
+    character_start = analysis.index("At 13:15") + len("At ")
+    expected_start = len(analysis[:character_start].encode("utf-8"))
+    matching = [
         row
         for row in rows
-        if row["status"] != "automatically-excluded"
-        and row["precision"] == "exact-minute-resolved"
+        if row["matchedText"] == "13:15" and row["matchStartByte"] == expected_start
     ]
-    assert all(
-        not any(shape in str(row["matchedText"]) for shape in false_positive_shapes)
-        for row in releaseable
-    )
+    assert len(matching) == 1
+    candidate = matching[0]
+
+    assert candidate["normalizedTimes"] == ["13:15"]
+    assert candidate["precision"] == "exact-minute-resolved"
+    assert candidate["status"] == "detected"
 
 
 def test_extract_emits_exact_utf8_offsets_ids_context_and_segmentation(

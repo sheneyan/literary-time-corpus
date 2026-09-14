@@ -292,7 +292,11 @@ def extract_candidates(document: dict[str, Any]) -> list[dict[str, Any]]:
         preceding = text[max(0, match.start() - 16) : match.start()]
         if re.match(r"\s+hours?\b", following, re.IGNORECASE):
             return None
-        if re.search(r"\b[A-Z][a-z]+\s+$", preceding):
+        if re.search(
+            r"\b(?:chapter|verse|genesis|exodus|psalms?|matthew|mark|luke|john)\s+$",
+            preceding,
+            re.IGNORECASE,
+        ):
             return None
         hour, minute = int(match.group(1)), int(match.group(2))
         if hour >= 13:

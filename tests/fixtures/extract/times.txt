@@ -2,7 +2,7 @@ Synthetic metadata — café
 *** START OF THE PROJECT GUTENBERG EBOOK SYNTHETIC TIMES ***
 Café patrons waited. At 1:17 a.m., the lamp was lit.
 The bell rang at 9:03 P.M.
-The train left at 13:15.
+At 13:15, the train left.
 At twenty minutes past four, the street stirred.
 It was quarter past six when she returned.
 At a quarter to eight, they closed the gate.
@@ -10,5 +10,5 @@ Half past nine found him awake.
 At noon, the square filled; at midnight, it emptied.
 The bare clock showed 5:42.
 It was about five o'clock when the mist lifted.
-The date was 2026-09-14, the price was $1:30, the verse was John 3:16, and the wait lasted 1:30 hours.
+The date was 2026-09-14, the price was $1:30, the verse was John 3:16, lowercase chapter 13:15 was cited, and the wait lasted 1:30 hours.
 *** END OF THE PROJECT GUTENBERG EBOOK SYNTHETIC TIMES ***
