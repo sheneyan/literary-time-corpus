@@ -49,7 +49,6 @@ def test_extract_resolves_initial_exact_time_rule_families(run_ltc, tmp_path: Pa
     expected = {
         "1:17 a.m.": ("numeric-12-hour", ["01:17"]),
         "9:03 P.M.": ("numeric-12-hour", ["21:03"]),
-        "13:15": ("numeric-24-hour", ["13:15"]),
         "noon": ("named-time", ["12:00"]),
         "midnight": ("named-time", ["00:00"]),
     }
@@ -94,6 +93,15 @@ def test_extract_marks_bare_clock_ambiguous_and_approximation_non_releaseable(
     assert approximate["status"] == "automatically-excluded"
     assert approximate["exclusionReasonCodes"] == ["approximate-expression"]
 
+    for text in ("about 13:15", "approximately 14:20"):
+        numeric_approximation = candidate_by_text(rows, text)
+        assert numeric_approximation["normalizedTimes"] == []
+        assert numeric_approximation["precision"] == "approximate"
+        assert numeric_approximation["status"] == "automatically-excluded"
+        assert numeric_approximation["exclusionReasonCodes"] == [
+            "approximate-expression"
+        ]
+
 
 def test_extract_does_not_release_false_positive_numeric_shapes(run_ltc, tmp_path: Path) -> None:
     document, rows, _output = extract_fixture(run_ltc, tmp_path)
@@ -102,8 +110,14 @@ def test_extract_does_not_release_false_positive_numeric_shapes(run_ltc, tmp_pat
     false_positive_shapes = (
         "2026-09-14",
         "$1:30",
+        "$ 2:40",
+        "€3:50",
+        "£ 4:10",
+        "¥5:20",
         "John 3:16",
-        "chapter 13:15",
+        "Romans 13:15",
+        "chapter 12:10",
+        "13:15:42",
         "1:30 hours",
     )
     for shape in false_positive_shapes:
@@ -140,6 +154,20 @@ def test_extract_keeps_sentence_initial_numeric_24_hour_time(run_ltc, tmp_path: 
     assert candidate["status"] == "detected"
 
 
+def test_extract_supports_zero_padded_24_hour_times(run_ltc, tmp_path: Path) -> None:
+    _document, rows, _output = extract_fixture(run_ltc, tmp_path)
+
+    nine = candidate_by_text(rows, "09:05")
+    midnight = candidate_by_text(rows, "00:07")
+
+    assert nine["normalizedTimes"] == ["09:05"]
+    assert nine["precision"] == "exact-minute-resolved"
+    assert nine["ruleFamily"] == "numeric-24-hour"
+    assert midnight["normalizedTimes"] == ["00:07"]
+    assert midnight["precision"] == "exact-minute-resolved"
+    assert midnight["ruleFamily"] == "numeric-24-hour"
+
+
 def test_extract_emits_exact_utf8_offsets_ids_context_and_segmentation(
     run_ltc, tmp_path: Path
 ) -> None:
@@ -158,6 +186,7 @@ def test_extract_emits_exact_utf8_offsets_ids_context_and_segmentation(
         assert candidate["candidateId"] == expected_candidate_id(candidate)
         assert candidate["sourceId"] == document["sourceId"]
         assert candidate["sourceSha256"] == document["sourceSha256"]
+        assert candidate["sourceHashStatus"] == "carried-from-normalization"
         assert candidate["analysisTextSha256"] == document["analysisTextSha256"]
         assert candidate["normalizationVersion"] == document["normalizationVersion"]
         assert candidate["schemaVersion"] == "time-candidate-v1"
@@ -197,7 +226,7 @@ def test_extract_rejects_tampered_normalized_hash_without_output(run_ltc, tmp_pa
     assert json.loads(result.stderr) == {
         "error": {
             "code": "invalid-normalized-source",
-            "message": "normalized source hashes do not match its content",
+            "message": "analysis text hash does not match its content",
         }
     }
     assert not output.exists()
@@ -213,5 +242,10 @@ def test_extract_rejects_source_hash_inconsistent_with_source_identity(run_ltc, 
     result = run_ltc("extract", "--input", normalized, "--output", output)
 
     assert result.returncode == 2
-    assert json.loads(result.stderr)["error"]["code"] == "invalid-normalized-source"
+    assert json.loads(result.stderr) == {
+        "error": {
+            "code": "invalid-normalized-source",
+            "message": "source identity is inconsistent with carried source hash",
+        }
+    }
     assert not output.exists()

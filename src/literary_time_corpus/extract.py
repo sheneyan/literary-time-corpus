@@ -88,12 +88,12 @@ def _read_normalized(path: Path) -> dict[str, Any]:
     if actual_analysis_hash != document["analysisTextSha256"]:
         raise ExtractionError(
             "invalid-normalized-source",
-            "normalized source hashes do not match its content",
+            "analysis text hash does not match its content",
         )
     if document["sourceId"] != f"synthetic_{document['sourceSha256'][:12]}":
         raise ExtractionError(
             "invalid-normalized-source",
-            "normalized source hashes do not match its content",
+            "source identity is inconsistent with carried source hash",
         )
     return document
 
@@ -164,6 +164,7 @@ def _candidate(
         "ruleId": rule_id,
         "schemaVersion": SCHEMA_VERSION,
         "sourceId": document["sourceId"],
+        "sourceHashStatus": "carried-from-normalization",
         "sourceSha256": document["sourceSha256"],
         "status": status,
         "warningReasonCodes": warnings or [],
@@ -197,6 +198,24 @@ def extract_candidates(document: dict[str, Any]) -> list[dict[str, Any]]:
             match,
             rule_family="approximate-clock",
             rule_id="approx-about-oclock-v1",
+            normalized_times=[],
+            precision="approximate",
+            status="automatically-excluded",
+            exclusions=["approximate-expression"],
+        ),
+    )
+
+    approximate_numeric = re.compile(
+        r"\b(?:about|approximately)\s+(?:[01]?[0-9]|2[0-3]):[0-5][0-9](?![0-9:]|\s*(?:hours?|minutes?|seconds?)\b)",
+        re.IGNORECASE,
+    )
+    add_matches(
+        approximate_numeric,
+        lambda match: _candidate(
+            document,
+            match,
+            rule_family="approximate-clock",
+            rule_id="approx-numeric-v1",
             normalized_times=[],
             precision="approximate",
             status="automatically-excluded",
@@ -285,21 +304,25 @@ def extract_candidates(document: dict[str, Any]) -> list[dict[str, Any]]:
         ),
     )
 
-    numeric_bare = re.compile(r"(?<![\w$])([0-9]|1[0-9]|2[0-3]):([0-5][0-9])(?![0-9])")
+    numeric_bare = re.compile(
+        r"(?<![\w$€£¥])([01]?[0-9]|2[0-3]):([0-5][0-9])(?![0-9])"
+    )
 
     def build_bare(match: re.Match[str]) -> dict[str, Any] | None:
         following = text[match.end() : match.end() + 12]
-        preceding = text[max(0, match.start() - 16) : match.start()]
-        if re.match(r"\s+hours?\b", following, re.IGNORECASE):
+        preceding = text[max(0, match.start() - 32) : match.start()]
+        if re.match(r"(?::[0-5][0-9]|\s+(?:hours?|minutes?|seconds?)\b)", following, re.IGNORECASE):
             return None
-        if re.search(
-            r"\b(?:chapter|verse|genesis|exodus|psalms?|matthew|mark|luke|john)\s+$",
-            preceding,
-            re.IGNORECASE,
-        ):
+        if re.search(r"[$€£¥]\s*$", preceding):
             return None
-        hour, minute = int(match.group(1)), int(match.group(2))
-        if hour >= 13:
+        if re.search(r"\b(?:chapter|verse)\s+$", preceding, re.IGNORECASE):
+            return None
+        title_reference = re.search(r"\b([A-Z][A-Za-z]*)\s+$", preceding)
+        if title_reference and title_reference.group(1) != "At":
+            return None
+        raw_hour = match.group(1)
+        hour, minute = int(raw_hour), int(match.group(2))
+        if hour >= 13 or (len(raw_hour) == 2 and raw_hour.startswith("0")):
             return _candidate(
                 document,
                 match,
