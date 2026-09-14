@@ -7,6 +7,7 @@ import sys
 from pathlib import Path
 from typing import Sequence
 
+from literary_time_corpus.extract import ExtractionError, extract_file
 from literary_time_corpus.normalize import NormalizationError, normalize_file
 
 
@@ -31,7 +32,9 @@ def build_parser() -> argparse.ArgumentParser:
     normalize.add_argument("--input", type=Path, required=True)
     normalize.add_argument("--output", type=Path, required=True)
 
-    subparsers.add_parser("extract", help="extract time candidates")
+    extract = subparsers.add_parser("extract", help="extract time candidates")
+    extract.add_argument("--input", type=Path, required=True)
+    extract.add_argument("--output", type=Path, required=True)
     subparsers.add_parser("validate", help="validate a release candidate")
     subparsers.add_parser("report", help="summarize candidate output")
     return parser
@@ -102,8 +105,17 @@ def main(argv: Sequence[str] | None = None) -> int:
                 remove_unchanged_regular_file(arguments.output, prior_output)
                 raise
             return 0
+        if arguments.command == "extract":
+            validate_normalize_paths(arguments.input, arguments.output)
+            prior_output = regular_file_identity(arguments.output)
+            try:
+                extract_file(arguments.input, arguments.output)
+            except Exception:
+                remove_unchanged_regular_file(arguments.output, prior_output)
+                raise
+            return 0
         raise CommandError("not-implemented", f"{arguments.command} is not implemented")
-    except (CommandError, NormalizationError) as error:
+    except (CommandError, ExtractionError, NormalizationError) as error:
         return write_error(error.code, str(error), exit_code=2)
     except Exception:
         return write_error(
