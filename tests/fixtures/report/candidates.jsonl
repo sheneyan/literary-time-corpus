@@ -1,0 +1,7 @@
+{"exclusionReasonCodes":[],"normalizedTimes":["01:17"],"precision":"exact-minute-resolved","ruleFamily":"numeric-12-hour","schemaVersion":"time-candidate-v1","status":"detected","warningReasonCodes":[]}
+{"exclusionReasonCodes":[],"normalizedTimes":["01:17"],"precision":"exact-minute-resolved","ruleFamily":"named-time","schemaVersion":"time-candidate-v1","status":"reviewed","warningReasonCodes":["context-note"]}
+{"exclusionReasonCodes":["approximate-expression"],"normalizedTimes":[],"precision":"approximate","ruleFamily":"approximate-clock","schemaVersion":"time-candidate-v1","status":"automatically-excluded","warningReasonCodes":[]}
+{"exclusionReasonCodes":[],"normalizedTimes":["04:20","16:20"],"precision":"exact-minute-ambiguous","ruleFamily":"written-minutes","schemaVersion":"time-candidate-v1","status":"detected","warningReasonCodes":["missing-meridiem"]}
+{"exclusionReasonCodes":[],"normalizedTimes":["13:15"],"precision":"exact-minute-resolved","ruleFamily":"numeric-24-hour","schemaVersion":"time-candidate-v1","status":"awaiting-review","warningReasonCodes":[]}
+{"exclusionReasonCodes":[],"normalizedTimes":["12:00"],"precision":"exact-minute-resolved","ruleFamily":"named-time","schemaVersion":"time-candidate-v1","status":"detected","warningReasonCodes":[]}
+{"exclusionReasonCodes":["duplicate-source"],"normalizedTimes":["13:15"],"precision":"exact-minute-resolved","ruleFamily":"numeric-24-hour","schemaVersion":"time-candidate-v1","status":"automatically-excluded","warningReasonCodes":["context-note"]}

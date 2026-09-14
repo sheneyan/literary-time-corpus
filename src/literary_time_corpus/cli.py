@@ -9,6 +9,7 @@ from typing import Sequence
 
 from literary_time_corpus.extract import ExtractionError, extract_file
 from literary_time_corpus.normalize import NormalizationError, normalize_file
+from literary_time_corpus.report import ReportError, report_file
 from literary_time_corpus.validate import (
     ReleaseValidationError,
     ValidationInputError,
@@ -46,7 +47,9 @@ def build_parser() -> argparse.ArgumentParser:
     validate.add_argument("--review", type=Path, required=True)
     validate.add_argument("--rights", type=Path, required=True)
     validate.add_argument("--output", type=Path, required=True)
-    subparsers.add_parser("report", help="summarize candidate output")
+    report = subparsers.add_parser("report", help="summarize candidate output")
+    report.add_argument("--input", type=Path, required=True)
+    report.add_argument("--output", type=Path, required=True)
     return parser
 
 
@@ -148,11 +151,16 @@ def main(argv: Sequence[str] | None = None) -> int:
                 arguments.output,
             )
             return 0
+        if arguments.command == "report":
+            validate_normalize_paths(arguments.input, arguments.output)
+            report_file(arguments.input, arguments.output)
+            return 0
         raise CommandError("not-implemented", f"{arguments.command} is not implemented")
     except (
         CommandError,
         ExtractionError,
         NormalizationError,
+        ReportError,
         ReleaseValidationError,
         ValidationInputError,
     ) as error:
