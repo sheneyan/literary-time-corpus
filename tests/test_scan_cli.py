@@ -392,6 +392,42 @@ def test_scan_rejects_unsafe_metadata_controls_without_echo(
     assert not destination.exists()
 
 
+def test_scan_allows_zwj_and_zwnj_in_explicit_metadata(
+    run_ltc, tmp_path: Path
+) -> None:
+    source = tmp_path / "book.txt"
+    destination = tmp_path / "scan"
+    title = "Family 👨‍👩‍👧‍👦 and Persian می‌رود"
+    source.write_text("The bell rang at 13:15.\n", encoding="utf-8")
+
+    result = run_ltc(
+        "scan", source, "--output", destination, "--title", title
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert json.loads((destination / "run.json").read_text())["workMetadata"][
+        "title"
+    ] == title
+    assert title in (destination / "review.md").read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize("title", ["family👨‍👩‍👧‍👦", "نام‌کتاب"])
+def test_scan_allows_zwj_and_zwnj_in_default_filename_stem(
+    run_ltc, tmp_path: Path, title: str
+) -> None:
+    source = tmp_path / f"{title}.txt"
+    destination = tmp_path / "scan"
+    source.write_text("The bell rang at 13:15.\n", encoding="utf-8")
+
+    result = run_ltc("scan", source, "--output", destination)
+
+    assert result.returncode == 0, result.stderr
+    assert json.loads((destination / "run.json").read_text())["workMetadata"][
+        "title"
+    ] == title
+    assert title in (destination / "review.md").read_text(encoding="utf-8")
+
+
 def test_review_renderer_visibly_encodes_non_whitespace_controls(
     run_ltc, tmp_path: Path
 ) -> None:
@@ -455,6 +491,38 @@ def test_review_renderer_falls_back_when_both_fence_delimiters_are_too_long(
     assert "\n# injected\n" not in review
     assert "`" * 256 not in review
     assert "~" * 256 not in review
+    assert read_rows(destination)[0]["context"] == original["context"]
+
+
+def test_review_fallback_only_indents_markdown_line_endings(
+    run_ltc, tmp_path: Path
+) -> None:
+    source = tmp_path / "book.txt"
+    destination = tmp_path / "scan"
+    source.write_text("The bell rang at 13:15.\n", encoding="utf-8")
+    assert run_ltc("scan", source, "--output", destination).returncode == 0
+    original = read_rows(destination)[0]
+    backticks = "`" * 255
+    tildes = "~" * 255
+    non_markdown_separators = "\u0085\v\f\u2028\u2029"
+    context_before = (
+        f"{backticks}\r\n{tildes}\rbefore{non_markdown_separators}"
+        "# preserved\n# injected\n"
+    )
+    candidate = candidate_with_context(original, context_before)
+    metadata = candidate["workMetadata"]
+    assert isinstance(metadata, dict)
+
+    review = render_review_markdown([candidate], metadata).decode("utf-8")
+
+    expected = (
+        f"    {backticks}\r\n    {tildes}\r"
+        f"    before{non_markdown_separators}# preserved\n"
+        "    # injected\n"
+        "    13:15"
+    )
+    assert expected in review
+    assert f"{non_markdown_separators}    # preserved" not in review
     assert read_rows(destination)[0]["context"] == original["context"]
 
 

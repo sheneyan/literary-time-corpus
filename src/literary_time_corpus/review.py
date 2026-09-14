@@ -18,6 +18,15 @@ GROUPS = (
 BACKTICK_RUN = re.compile(r"`+")
 TILDE_RUN = re.compile(r"~+")
 MAX_FENCE_LENGTH = 255
+HAZARDOUS_DIRECTIONAL_CONTROLS = frozenset(
+    {
+        "\u061c",
+        "\u200e",
+        "\u200f",
+        *(chr(codepoint) for codepoint in range(0x202A, 0x202F)),
+        *(chr(codepoint) for codepoint in range(0x2066, 0x206A)),
+    }
+)
 CONTROL_WHITESPACE = {
     "\t": r"\t",
     "\n": r"\n",
@@ -32,7 +41,10 @@ def _escape_markdown(value: str) -> str:
     for character in value:
         if character in CONTROL_WHITESPACE:
             rendered.append(CONTROL_WHITESPACE[character])
-        elif unicodedata.category(character) in {"Cc", "Cf"}:
+        elif (
+            unicodedata.category(character) == "Cc"
+            or character in HAZARDOUS_DIRECTIONAL_CONTROLS
+        ):
             codepoint = ord(character)
             rendered.append(
                 f"\\x{codepoint:02x}"
@@ -69,7 +81,19 @@ def _fenced_text(value: str) -> str:
     elif longest_tilde_run < MAX_FENCE_LENGTH:
         fence = "~" * max(3, longest_tilde_run + 1)
     else:
-        return "".join(f"    {line}" for line in value.splitlines(keepends=True))
+        rendered = ["    "]
+        for index, character in enumerate(value):
+            rendered.append(character)
+            has_more = index + 1 < len(value)
+            if has_more and (
+                character == "\n"
+                or (
+                    character == "\r"
+                    and value[index + 1] != "\n"
+                )
+            ):
+                rendered.append("    ")
+        return "".join(rendered)
     closing_prefix = "" if value.endswith("\n") else "\n"
     return f"{fence}text\n{value}{closing_prefix}{fence}"
 

@@ -34,6 +34,15 @@ ARTIFACT_NAMES = (
 )
 INVALID_PERCENT_ESCAPE = re.compile(r"%(?![0-9A-Fa-f]{2})")
 HOST_LABEL = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?")
+HAZARDOUS_DIRECTIONAL_CONTROLS = frozenset(
+    {
+        "\u061c",
+        "\u200e",
+        "\u200f",
+        *(chr(codepoint) for codepoint in range(0x202A, 0x202F)),
+        *(chr(codepoint) for codepoint in range(0x2066, 0x206A)),
+    }
+)
 
 
 class ScanError(ValueError):
@@ -112,12 +121,14 @@ def build_work_metadata(
     effective_title = title if title is not None else input_path.stem
     effective_author = author if author is not None else "unknown"
     if not effective_title.strip() or any(
-        unicodedata.category(character) in {"Cc", "Cf"}
+        unicodedata.category(character) == "Cc"
+        or character in HAZARDOUS_DIRECTIONAL_CONTROLS
         for character in effective_title
     ):
         raise _invalid_metadata()
     if not effective_author.strip() or any(
-        unicodedata.category(character) in {"Cc", "Cf"}
+        unicodedata.category(character) == "Cc"
+        or character in HAZARDOUS_DIRECTIONAL_CONTROLS
         for character in effective_author
     ):
         raise _invalid_metadata()
