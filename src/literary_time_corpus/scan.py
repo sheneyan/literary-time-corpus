@@ -5,7 +5,6 @@ import ipaddress
 import json
 import os
 import re
-import shutil
 import stat
 import tempfile
 import unicodedata
@@ -263,10 +262,36 @@ def _directory_identity(path: Path) -> DirectoryIdentity:
     return status.st_dev, status.st_ino
 
 
-def _quarantine_owned_directory(
+def _path_entry_status(path: Path) -> str:
+    try:
+        path.lstat()
+    except FileNotFoundError:
+        return "absent"
+    except OSError:
+        return "unknown"
+    return "present"
+
+
+def _cleanup_failed(
+    path: Path,
+    *,
+    retained_path_basename: str | None = None,
+) -> ScanError:
+    error = ScanError(
+        "scan-cleanup-failed",
+        "could not safely retain failed scan artifacts",
+        stage="cleanup",
+    )
+    error.details["officialPathStatus"] = _path_entry_status(path)
+    if retained_path_basename is not None:
+        error.details["retainedPathBasename"] = retained_path_basename
+    return error
+
+
+def _retain_path_entry_in_quarantine(
     path: Path,
     expected_identity: DirectoryIdentity,
-) -> str | None:
+) -> dict[str, object] | None:
     try:
         quarantine = Path(
             tempfile.mkdtemp(
@@ -275,70 +300,43 @@ def _quarantine_owned_directory(
             )
         )
     except OSError:
-        return None
+        raise _cleanup_failed(path) from None
+    try:
+        quarantine.chmod(0o700)
+    except OSError:
+        raise _cleanup_failed(
+            path,
+            retained_path_basename=quarantine.name,
+        ) from None
     moved_entry = quarantine / "entry"
     try:
         os.rename(path, moved_entry)
-    except FileNotFoundError:
-        try:
-            quarantine.rmdir()
-        except OSError:
-            pass
-        return None
     except OSError:
         try:
             quarantine.rmdir()
         except OSError:
-            pass
-        return None
+            raise _cleanup_failed(
+                path,
+                retained_path_basename=quarantine.name,
+            ) from None
+        raise _cleanup_failed(path) from None
 
     try:
         moved_status = moved_entry.lstat()
     except OSError:
-        return quarantine.name
+        raise _cleanup_failed(
+            path,
+            retained_path_basename=quarantine.name,
+        ) from None
     moved_identity = (moved_status.st_dev, moved_status.st_ino)
-    if not stat.S_ISDIR(moved_status.st_mode) or moved_identity != expected_identity:
-        if not os.path.lexists(path):
-            try:
-                os.rename(moved_entry, path)
-                quarantine.rmdir()
-                return None
-            except OSError:
-                pass
-        return quarantine.name
-
-    parent_descriptor: int | None = None
-    entry_descriptor: int | None = None
-    try:
-        parent_descriptor = os.open(
-            quarantine,
-            os.O_RDONLY | getattr(os, "O_DIRECTORY", 0),
-        )
-        entry_descriptor = os.open(
-            "entry",
-            os.O_RDONLY
-            | getattr(os, "O_DIRECTORY", 0)
-            | getattr(os, "O_NOFOLLOW", 0),
-            dir_fd=parent_descriptor,
-        )
-        opened_status = os.fstat(entry_descriptor)
-        if (
-            not stat.S_ISDIR(opened_status.st_mode)
-            or (opened_status.st_dev, opened_status.st_ino) != expected_identity
-        ):
-            return quarantine.name
-        if not getattr(shutil.rmtree, "avoids_symlink_attacks", False):
-            return quarantine.name
-        shutil.rmtree("entry", dir_fd=parent_descriptor)
-        quarantine.rmdir()
-        return None
-    except OSError:
-        return quarantine.name
-    finally:
-        if entry_descriptor is not None:
-            os.close(entry_descriptor)
-        if parent_descriptor is not None:
-            os.close(parent_descriptor)
+    return {
+        "identityMatched": (
+            stat.S_ISDIR(moved_status.st_mode)
+            and moved_identity == expected_identity
+        ),
+        "officialPathStatus": _path_entry_status(path),
+        "retainedPathBasename": quarantine.name,
+    }
 
 
 def build_run_manifest(
@@ -631,6 +629,7 @@ def scan_file(
         ) from error
     created_directory_identity = _directory_identity(staging_path)
 
+    cleanup_path = staging_path
     try:
         counts, source, run = scan_to_staging(
             input_path,
@@ -657,36 +656,34 @@ def scan_file(
                 "could not publish output directory",
                 stage="publication",
             ) from error
-        try:
-            if _directory_identity(output_path) != created_directory_identity:
-                raise _verification_failed()
-            _verify_staging(
-                output_path,
-                run,
-                source=source,
-                work_metadata=metadata,
-                start_marker=start_marker,
-                end_marker=end_marker,
-                expected_identities=artifact_identities,
-            )
-        except ScanError:
-            quarantine_name = _quarantine_owned_directory(
-                output_path,
-                created_directory_identity,
-            )
-            if quarantine_name is not None:
-                cleanup_error = _verification_failed()
-                cleanup_error.details["quarantineName"] = quarantine_name
-                raise cleanup_error from None
-            raise
+        cleanup_path = output_path
+        if _directory_identity(output_path) != created_directory_identity:
+            raise _verification_failed()
+        _verify_staging(
+            output_path,
+            run,
+            source=source,
+            work_metadata=metadata,
+            start_marker=start_marker,
+            end_marker=end_marker,
+            expected_identities=artifact_identities,
+        )
         return {
             "candidateCount": counts["candidateCount"],
             "outputName": output_path.name,
             "resolvedMinuteCount": counts["resolvedMinuteCount"],
             "status": "complete",
         }
-    finally:
-        _quarantine_owned_directory(
-            staging_path,
+    except ScanError as error:
+        retention = _retain_path_entry_in_quarantine(
+            cleanup_path,
             created_directory_identity,
         )
+        if retention is not None:
+            error.details["officialPathStatus"] = retention[
+                "officialPathStatus"
+            ]
+            error.details["retainedPathBasename"] = retention[
+                "retainedPathBasename"
+            ]
+        raise

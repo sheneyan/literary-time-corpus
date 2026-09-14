@@ -32,6 +32,22 @@ def read_rows(destination: Path) -> list[dict[str, object]]:
     ]
 
 
+def assert_retained_failure_details(
+    error: dict[str, object],
+    tmp_path: Path,
+    *,
+    stage: str,
+) -> None:
+    details = error["details"]
+    assert isinstance(details, dict)
+    assert details["stage"] == stage
+    assert details["officialPathStatus"] == "absent"
+    retained_name = details["retainedPathBasename"]
+    assert isinstance(retained_name, str)
+    assert Path(retained_name).name == retained_name
+    assert (tmp_path / retained_name / "entry").is_dir()
+
+
 def candidate_with_context(
     candidate: dict[str, object], context_before: str, context_after: str = ""
 ) -> dict[str, object]:
@@ -445,7 +461,7 @@ def test_scan_rejects_tampered_staged_review_without_publishing(
     assert captured.out == ""
     error = json.loads(captured.err)["error"]
     assert error["code"] == "scan-verification-failed"
-    assert error["details"] == {"stage": "verification"}
+    assert_retained_failure_details(error, tmp_path, stage="verification")
     assert not destination.exists()
 
 
@@ -479,7 +495,7 @@ def test_scan_rejects_coherent_artifacts_not_regenerated_from_source(
     assert captured.out == ""
     error = json.loads(captured.err)["error"]
     assert error["code"] == "scan-verification-failed"
-    assert error["details"] == {"stage": "verification"}
+    assert_retained_failure_details(error, tmp_path, stage="verification")
     assert not destination.exists()
 
 
@@ -520,7 +536,7 @@ def test_scan_rejects_noncanonical_run_json_without_publishing(
     assert captured.out == ""
     error = json.loads(captured.err)["error"]
     assert error["code"] == "scan-verification-failed"
-    assert error["details"] == {"stage": "verification"}
+    assert_retained_failure_details(error, tmp_path, stage="verification")
     assert not destination.exists()
 
 
@@ -553,11 +569,11 @@ def test_scan_rejects_symlinked_staged_artifact_without_publishing(
     assert captured.out == ""
     error = json.loads(captured.err)["error"]
     assert error["code"] == "scan-verification-failed"
-    assert error["details"] == {"stage": "verification"}
+    assert_retained_failure_details(error, tmp_path, stage="verification")
     assert not destination.exists()
 
 
-def test_scan_reverifies_after_publish_and_removes_corrupt_created_directory(
+def test_scan_reverifies_after_publish_and_retains_corrupt_created_directory(
     tmp_path: Path, monkeypatch, capsys
 ) -> None:
     source = tmp_path / "book.txt"
@@ -597,7 +613,7 @@ def test_scan_reverifies_after_publish_and_removes_corrupt_created_directory(
     assert captured.out == ""
     error = json.loads(captured.err)["error"]
     assert error["code"] == "scan-verification-failed"
-    assert error["details"] == {"stage": "verification"}
+    assert_retained_failure_details(error, tmp_path, stage="verification")
     assert not destination.exists()
 
 
@@ -644,14 +660,20 @@ def test_scan_does_not_remove_replacement_of_its_created_staging_directory(
     assert captured.out == ""
     error = json.loads(captured.err)["error"]
     assert error["code"] == "scan-verification-failed"
-    assert error["details"] == {"stage": "verification"}
+    assert error["details"]["stage"] == "verification"
+    retained_name = error["details"]["retainedPathBasename"]
+    assert isinstance(retained_name, str)
+    assert error["details"]["officialPathStatus"] == "absent"
     assert not destination.exists()
     assert len(replacement_paths) == 1
-    assert (replacement_paths[0] / "unrelated.txt").read_text() == "keep"
+    assert not replacement_paths[0].exists()
+    assert (
+        tmp_path / retained_name / "entry" / "unrelated.txt"
+    ).read_text() == "keep"
 
 
 @pytest.mark.parametrize("original_name_occupied", [False, True])
-def test_quarantine_cleanup_preserves_a_directory_swapped_before_atomic_rename(
+def test_quarantine_cleanup_retains_a_directory_swapped_before_atomic_rename(
     tmp_path: Path,
     monkeypatch,
     original_name_occupied: bool,
@@ -686,25 +708,30 @@ def test_quarantine_cleanup_preserves_a_directory_swapped_before_atomic_rename(
 
     monkeypatch.setattr(scan_module.os, "rename", inject_swap)
 
-    retained_name = scan_module._quarantine_owned_directory(
+    outcome = scan_module._retain_path_entry_in_quarantine(
         owned,
         owned_identity,
     )
 
     assert (displaced_owned / "owned.txt").read_text() == "owned"
+    assert outcome is not None
+    retained_name = outcome["retainedPathBasename"]
+    assert isinstance(retained_name, str)
+    assert Path(retained_name).name == retained_name
+    assert (tmp_path / retained_name).stat().st_mode & 0o777 == 0o700
+    assert outcome["identityMatched"] is False
     if original_name_occupied:
-        assert retained_name is not None
-        assert Path(retained_name).name == retained_name
+        assert outcome["officialPathStatus"] == "present"
         assert (owned / "occupant.txt").read_text() == "occupant"
-        assert (
-            tmp_path / retained_name / "entry" / "unrelated.txt"
-        ).read_text() == "keep"
     else:
-        assert retained_name is None
-        assert (owned / "unrelated.txt").read_text() == "keep"
+        assert outcome["officialPathStatus"] == "absent"
+        assert not owned.exists()
+    assert (
+        tmp_path / retained_name / "entry" / "unrelated.txt"
+    ).read_text() == "keep"
 
 
-def test_quarantine_cleanup_moves_symlink_without_following_it(
+def test_quarantine_cleanup_retains_symlink_without_following_it(
     tmp_path: Path,
 ) -> None:
     owned = tmp_path / "owned"
@@ -717,14 +744,90 @@ def test_quarantine_cleanup_moves_symlink_without_following_it(
     (external / "keep.txt").write_text("keep", encoding="utf-8")
     owned.symlink_to(external, target_is_directory=True)
 
-    retained_name = scan_module._quarantine_owned_directory(
+    outcome = scan_module._retain_path_entry_in_quarantine(
         owned,
         owned_identity,
     )
 
-    assert retained_name is None
-    assert owned.is_symlink()
+    assert outcome is not None
+    assert outcome["identityMatched"] is False
+    assert outcome["officialPathStatus"] == "absent"
+    retained_name = outcome["retainedPathBasename"]
+    assert isinstance(retained_name, str)
+    assert (tmp_path / retained_name / "entry").is_symlink()
+    assert not owned.exists()
     assert (external / "keep.txt").read_text() == "keep"
+
+
+def test_scan_reports_and_retains_failed_generation_staging(
+    run_ltc, tmp_path: Path
+) -> None:
+    source = tmp_path / "invalid.txt"
+    destination = tmp_path / "scan"
+    source.write_bytes(b"invalid utf-8: \xff")
+
+    result = run_ltc("scan", source, "--output", destination)
+
+    assert result.returncode == 2
+    assert result.stdout == ""
+    error = json.loads(result.stderr)["error"]
+    assert error["code"] == "invalid-utf8"
+    assert error["details"]["stage"] == "normalization"
+    retained_name = error["details"]["retainedPathBasename"]
+    assert isinstance(retained_name, str)
+    assert Path(retained_name).name == retained_name
+    assert error["details"]["officialPathStatus"] == "absent"
+    assert (tmp_path / retained_name / "entry").is_dir()
+    assert not destination.exists()
+
+
+def test_scan_reports_cleanup_failure_without_claiming_success(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    source = tmp_path / "book.txt"
+    destination = tmp_path / "scan"
+    source.write_text("The bell rang at 13:15.\n", encoding="utf-8")
+    verify_staging = scan_module._verify_staging
+    rename = scan_module.os.rename
+    verification_count = 0
+
+    def corrupt_after_first_verification(
+        artifact_directory: Path,
+        expected_run: dict[str, object],
+        **verification_inputs,
+    ) -> object:
+        nonlocal verification_count
+        verification_count += 1
+        result = verify_staging(
+            artifact_directory,
+            expected_run,
+            **verification_inputs,
+        )
+        if verification_count == 1:
+            review_path = artifact_directory / "review.md"
+            review_path.write_bytes(review_path.read_bytes() + b"corrupt\n")
+        return result
+
+    def reject_quarantine_move(source_path, destination_path, *args, **kwargs):
+        if Path(source_path) == destination and Path(destination_path).name == "entry":
+            raise PermissionError("synthetic cleanup failure")
+        return rename(source_path, destination_path, *args, **kwargs)
+
+    monkeypatch.setattr(scan_module, "_verify_staging", corrupt_after_first_verification)
+    monkeypatch.setattr(scan_module.os, "rename", reject_quarantine_move)
+
+    exit_code = main(["scan", str(source), "--output", str(destination)])
+    captured = capsys.readouterr()
+
+    assert exit_code == 2
+    assert captured.out == ""
+    error = json.loads(captured.err)["error"]
+    assert error["code"] == "scan-cleanup-failed"
+    assert error["details"] == {
+        "officialPathStatus": "present",
+        "stage": "cleanup",
+    }
+    assert destination.exists()
 
 
 def test_scan_review_renders_all_empty_sections(run_ltc, tmp_path: Path) -> None:
@@ -994,7 +1097,7 @@ def test_scan_reports_controlled_error_when_no_safe_review_fence_exists(
     assert captured.out == ""
     error = json.loads(captured.err)["error"]
     assert error["code"] == "review-render-failed"
-    assert error["details"] == {"stage": "review-render"}
+    assert_retained_failure_details(error, tmp_path, stage="review-render")
     assert "private-source-sentinel" not in captured.err
     assert not rejected_destination.exists()
 

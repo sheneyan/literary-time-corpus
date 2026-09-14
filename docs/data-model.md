@@ -117,25 +117,30 @@ numeric substitutions such as `1.0` for an integer are invalid.
 
 After renaming a new scan directory into place, scan repeats the complete
 verification and requires the captured artifact identities to be unchanged.
-If that post-publication check fails, it removes only the directory whose
-device and inode identify the directory created by that invocation, and reports
-`scan-verification-failed` at the `verification` stage instead of success. The
-identity-checked cleanup boundary is reusable by guarded replacement, where an
-older directory may need restoration. These checks close the
+If that post-publication check fails, scan reports an error instead of success
+and quarantines the current output entry. Successful scans still rename staging
+to output directly and leave no temporary directory. These checks close the
 program-controlled publication window; they cannot cryptographically prevent a
 same-user process from modifying an artifact after scan has successfully
 exited.
 
-Cleanup never performs a path check followed by path-based recursive deletion.
-It first creates a unique quarantine container in the same parent directory and
-atomically renames the current path entry into it without following symbolic
-links. Only a quarantined regular directory whose device and inode match the
-invocation-owned identity is recursively removed, using descriptor-relative
-symlink-resistant deletion. A mismatched entry is moved back when the original
-name is vacant. If that name became occupied or restoration races, the entry is
-retained under quarantine; cleanup returns, and a verification error reports,
-only the non-sensitive quarantine basename so an operator can inspect it. No
-mismatched file, directory, or symbolic-link target is deleted.
+Failed generation and failed post-publication verification use safe retention,
+not in-process deletion or restoration. Scan creates a unique same-parent
+quarantine directory with mode `0700`, atomically renames the current staging or
+output entry into it without following symbolic links, and then inspects the
+moved entry's device and inode. Whether that identity matches the
+invocation-owned directory or not, the entry remains quarantined for manual
+inspection; scan never recursively deletes it, moves it back, or overwrites a
+new entry at the official path. The original error includes only the
+non-sensitive `retainedPathBasename` and `officialPathStatus`. A successful move
+normally leaves the official output path `absent`; if another process creates a
+new entry there, its status is `present` and it is untouched.
+
+If the quarantine cannot be created or the atomic move fails, scan returns the
+distinct `scan-cleanup-failed` error at stage `cleanup`, never reports success,
+and includes the non-sensitive `officialPathStatus` (`absent`, `present`, or
+`unknown`). It does not attempt a check-then-delete or check-then-restore
+fallback.
 
 The manifest contains no current working directory, absolute path, username,
 hostname, staging name, timestamp, locale, timezone, or environment value.

@@ -143,6 +143,17 @@ a final-component symbolic link and must preserve unrelated sibling paths.
 Temporary and backup directories are removed after success; a failed rollback
 retains the backup and reports its non-sensitive basename for manual recovery.
 
+Failure cleanup for an invocation-owned staging directory or a newly published
+directory is retention-only. The command creates a unique same-parent `0700`
+quarantine, atomically moves the current path entry into it without following
+symbolic links, inspects the moved device and inode, and retains the entry
+regardless of whether that identity matches. It never recursively deletes or
+restores the moved entry in-process and never overwrites a replacement at the
+official path. The error reports only `retainedPathBasename` and
+`officialPathStatus`. If quarantine creation or movement fails, the command
+returns the distinct `scan-cleanup-failed` error with the non-sensitive official
+path status and cannot report success.
+
 Expected failures exit `2`; unexpected internal failures exit `1`. Errors use
 the existing single-object JSON stderr envelope and add the failed stage to
 `error.details.stage`. Standard output contains exactly one compact JSON object
