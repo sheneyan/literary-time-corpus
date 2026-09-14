@@ -1004,6 +1004,10 @@ def scan_file(
                 end_marker=end_marker,
                 expected_identities=artifact_identities,
             )
+            if not _directory_matches_identity(
+                output_path, created_directory_identity
+            ):
+                raise _verification_failed()
         return {
             "candidateCount": counts["candidateCount"],
             "outputName": output_path.name,
@@ -1015,7 +1019,11 @@ def scan_file(
             if not _directory_matches_identity(
                 output_path, created_directory_identity
             ):
-                raise _verification_failed() from caught_error
+                replacement_error = _verification_failed()
+                replacement_error.details["officialPathStatus"] = (
+                    _path_entry_status(output_path)
+                )
+                raise replacement_error from caught_error
             error = _staging_failure(caught_error)
             try:
                 retention = _retain_path_entry_in_quarantine(

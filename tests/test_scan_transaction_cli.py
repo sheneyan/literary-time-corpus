@@ -358,6 +358,46 @@ def test_force_retains_owned_output_on_unexpected_final_verifier_failure(
     assert "private final verifier failure" not in captured.err
 
 
+def test_force_rechecks_identity_after_final_verifier_swaps_to_symlink(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    source = tmp_path / "book.txt"
+    output = tmp_path / "scan"
+    moved_valid = tmp_path / "moved-valid"
+    source.write_text("At 13:15.", encoding="utf-8")
+    output.mkdir()
+    (output / "keep").write_bytes(b"old")
+    verify = scan_module._verify_staging
+    calls = 0
+
+    def swap_after_final_verification(*args, **kwargs):
+        nonlocal calls
+        result = verify(*args, **kwargs)
+        calls += 1
+        if calls == 3:
+            output.rename(moved_valid)
+            output.symlink_to(moved_valid, target_is_directory=True)
+        return result
+
+    monkeypatch.setattr(
+        scan_module, "_verify_staging", swap_after_final_verification
+    )
+
+    exit_code = main(["scan", str(source), "--output", str(output), "--force"])
+    captured = capsys.readouterr()
+
+    assert exit_code == 2
+    assert captured.out == ""
+    error = json.loads(captured.err)["error"]
+    assert error["code"] == "scan-verification-failed"
+    assert error["details"] == {
+        "officialPathStatus": "present",
+        "stage": "verification",
+    }
+    assert output.is_symlink()
+    assert {entry.name for entry in moved_valid.iterdir()} == ARTIFACTS
+
+
 def test_force_reports_backup_container_when_private_setup_fails(
     tmp_path: Path, monkeypatch, capsys
 ) -> None:
