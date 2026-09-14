@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import string
 
 from literary_time_corpus.candidate import (
     candidate_record_violations,
@@ -13,12 +14,33 @@ GROUPS = (
     ("ambiguous", "Exact-minute ambiguous"),
     ("excluded", "Approximate or excluded"),
 )
-MARKDOWN_CONTROL = re.compile(r"([\\`*_{}\[\]<>()#+\-.!|])")
 BACKTICK_RUN = re.compile(r"`+")
+CONTROL_WHITESPACE = {
+    "\t": r"\t",
+    "\n": r"\n",
+    "\v": r"\v",
+    "\f": r"\f",
+    "\r": r"\r",
+}
 
 
 def _escape_markdown(value: str) -> str:
-    return MARKDOWN_CONTROL.sub(r"\\\1", value)
+    rendered: list[str] = []
+    for character in value:
+        if character in CONTROL_WHITESPACE:
+            rendered.append(CONTROL_WHITESPACE[character])
+        elif character.isspace() and character != " ":
+            codepoint = ord(character)
+            rendered.append(
+                f"\\u{codepoint:04x}"
+                if codepoint <= 0xFFFF
+                else f"\\U{codepoint:08x}"
+            )
+        elif character in string.punctuation:
+            rendered.append(f"\\{character}")
+        else:
+            rendered.append(character)
+    return "".join(rendered)
 
 
 def _fenced_text(value: str) -> str:
@@ -64,7 +86,7 @@ def _render_candidate(candidate: dict[str, object], ordinal: int) -> list[str]:
     assert isinstance(exclusions, list)
     assert isinstance(candidate_id, str)
     rendered_times = (
-        ", ".join(_escape_markdown(value) for value in normalized_times)
+        ", ".join(normalized_times)
         if normalized_times
         else "none"
     )

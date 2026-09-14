@@ -9,6 +9,8 @@ from pathlib import Path
 
 import pytest
 
+from literary_time_corpus.review import render_review_markdown
+
 
 ARTIFACTS = {
     "normalized.json",
@@ -257,6 +259,67 @@ def test_scan_review_renders_all_empty_sections(run_ltc, tmp_path: Path) -> None
     assert review.count("## Exact-minute ambiguous") == 1
     assert review.count("## Approximate or excluded") == 1
     assert "Candidate ID:" not in review
+
+
+def test_scan_review_escapes_inline_metadata_without_changing_fixed_structure(
+    run_ltc, tmp_path: Path
+) -> None:
+    source = tmp_path / "book.txt"
+    destination = tmp_path / "scan"
+    punctuation = "!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~"
+    source.write_text("The bell rang at 13:15.\n", encoding="utf-8")
+
+    result = run_ltc(
+        "scan",
+        source,
+        "--output",
+        destination,
+        "--title",
+        f"Safe title\n=== {punctuation}",
+        "--author",
+        "~~text~~\tAuthor",
+    )
+
+    assert result.returncode == 0, result.stderr
+    review = (destination / "review.md").read_text(encoding="utf-8")
+    escaped_punctuation = "".join(f"\\{character}" for character in punctuation)
+    assert f"Title: Safe title\\n\\=\\=\\= {escaped_punctuation}" in review
+    assert "Author: \\~\\~text\\~\\~\\tAuthor" in review
+    assert "\n===\n" not in review
+    assert "~~text~~" not in review
+    assert review.count("# Literary time candidate review\n") == 1
+    assert review.count("This file is a review view, not a review record.") == 1
+    assert review.count("Candidates are not approved for publication.") == 1
+    assert (
+        review.count("The user is responsible for permission to process the input text.")
+        == 1
+    )
+    assert "13:15" in review
+
+
+def test_review_renderer_escapes_multiline_rule_and_reason_fields(
+    run_ltc, tmp_path: Path
+) -> None:
+    source = tmp_path / "book.txt"
+    destination = tmp_path / "scan"
+    source.write_text("café 😀 ```source``` at 13:15.\n", encoding="utf-8")
+    result = run_ltc("scan", source, "--output", destination)
+    assert result.returncode == 0, result.stderr
+    candidate = read_rows(destination)[0]
+    candidate["ruleId"] = "rule\n===\t~~name~~"
+    candidate["warningReasonCodes"] = ["warning\r\n~~reason~~"]
+    candidate["exclusionReasonCodes"] = ["excluded\v\fvalue"]
+    metadata = candidate["workMetadata"]
+    assert isinstance(metadata, dict)
+
+    review = render_review_markdown([candidate], metadata).decode("utf-8")
+
+    assert "Rule ID: rule\\n\\=\\=\\=\\t\\~\\~name\\~\\~" in review
+    assert "Warnings: warning\\r\\n\\~\\~reason\\~\\~" in review
+    assert "Exclusions: excluded\\v\\fvalue" in review
+    assert candidate["context"] in review
+    assert "````text\n" in review
+    assert "\n===\n" not in review
 
 
 def test_scan_preserves_multibyte_utf8_offsets(run_ltc, tmp_path: Path) -> None:
