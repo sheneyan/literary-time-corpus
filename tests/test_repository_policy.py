@@ -72,11 +72,12 @@ PRIVATE_KEY_MARKER = re.compile(
 )
 TOKEN_ASSIGNMENT = re.compile(
     rb"\b(?:api[_-]?key|access[_-]?token|secret[_-]?key)\b"
-    rb"\s*[:=]\s*['\"][A-Za-z0-9_./+=-]{16,}['\"]",
+    rb"\s*[:=]\s*(?:['\"][A-Za-z0-9_./+=-]{16,}['\"]|"
+    rb"[A-Za-z0-9_./+=-]{16,})(?=$|[\s;#])",
     re.IGNORECASE,
 )
 GUTENBERG_BODY_MARKER = re.compile(
-    rb"^\*\*\* (?:START|END) OF THE PROJECT GUTENBERG EBOOK\b",
+    rb"^\*\*\* (?:START|END) OF (?:THE|THIS) PROJECT GUTENBERG EBOOK\b",
     re.MULTILINE,
 )
 ALLOWED_DATA_ROOT_PLACEHOLDER_BYTES = {
@@ -314,6 +315,25 @@ def test_allowed_text_paths_reject_likely_secrets_and_gutenberg_bodies() -> None
     }
 
     assert policy_violations(files) == sorted(files)
+
+
+def test_secret_filter_rejects_unquoted_export_assignment() -> None:
+    unquoted_secret = (
+        b"export API_" + b"KEY=sk-proj-abcdefghijklmnopqrstuvwxyz\n"
+    )
+
+    assert policy_violations({"README.md": unquoted_secret}) == ["README.md"]
+
+
+def test_body_marker_filter_rejects_this_project_family() -> None:
+    marker = (
+        b"*** START OF THIS PROJECT "
+        + b"GUTENBERG EBOOK UNREVIEWED ***\n"
+    )
+
+    assert policy_violations({"docs/data-model.md": marker}) == [
+        "docs/data-model.md"
+    ]
 
 
 def test_text_fixture_exemption_requires_verified_synthetic_content() -> None:
