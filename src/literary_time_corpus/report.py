@@ -2,25 +2,21 @@ from __future__ import annotations
 
 import hashlib
 import json
-import re
 from collections import Counter
 from pathlib import Path
 from typing import Any
 
+from literary_time_corpus.candidate import (
+    CANDIDATE_SCHEMA_VERSION,
+    candidate_record_violations,
+)
 from literary_time_corpus.io import write_json_atomic
 
 
 REPORT_SCHEMA_VERSION = "candidate-report-v1"
 REPORT_VERSION = "report-v1"
-EXPECTED_CANDIDATE_SCHEMA = "time-candidate-v1"
+EXPECTED_CANDIDATE_SCHEMA = CANDIDATE_SCHEMA_VERSION
 MINUTES_PER_DAY = 24 * 60
-TIME_PATTERN = re.compile(r"(?:[01][0-9]|2[0-3]):[0-5][0-9]")
-STATUSES = {"detected", "automatically-excluded", "awaiting-review", "reviewed"}
-PRECISIONS = {
-    "exact-minute-resolved",
-    "exact-minute-ambiguous",
-    "approximate",
-}
 
 
 class ReportError(ValueError):
@@ -36,48 +32,6 @@ def _invalid(line_number: int, message: str) -> ReportError:
     return ReportError(
         "invalid-candidate-jsonl", message, details={"line": line_number}
     )
-
-
-def _reason_codes(value: Any, line_number: int, field: str) -> list[str]:
-    if (
-        not isinstance(value, list)
-        or any(not isinstance(item, str) or not item.strip() for item in value)
-        or len(set(value)) != len(value)
-    ):
-        raise _invalid(line_number, f"{field} must contain unique nonblank strings")
-    return value
-
-
-def _validate_candidate(candidate: Any, line_number: int) -> dict[str, Any]:
-    if not isinstance(candidate, dict):
-        raise _invalid(line_number, "candidate row must be a JSON object")
-    if candidate.get("schemaVersion") != EXPECTED_CANDIDATE_SCHEMA:
-        raise _invalid(line_number, "candidate schema version is unsupported")
-    if candidate.get("status") not in STATUSES:
-        raise _invalid(line_number, "candidate status is invalid")
-    if candidate.get("precision") not in PRECISIONS:
-        raise _invalid(line_number, "candidate precision is invalid")
-    if not isinstance(candidate.get("ruleFamily"), str) or not candidate[
-        "ruleFamily"
-    ].strip():
-        raise _invalid(line_number, "candidate rule family is missing")
-
-    normalized_times = candidate.get("normalizedTimes")
-    if (
-        not isinstance(normalized_times, list)
-        or any(
-            not isinstance(value, str) or TIME_PATTERN.fullmatch(value) is None
-            for value in normalized_times
-        )
-        or len(set(normalized_times)) != len(normalized_times)
-    ):
-        raise _invalid(line_number, "candidate normalized times are invalid")
-    if candidate["precision"] == "exact-minute-resolved" and len(normalized_times) != 1:
-        raise _invalid(line_number, "resolved candidate must contain exactly one minute")
-
-    _reason_codes(candidate.get("exclusionReasonCodes"), line_number, "exclusionReasonCodes")
-    _reason_codes(candidate.get("warningReasonCodes"), line_number, "warningReasonCodes")
-    return candidate
 
 
 def _sorted_counts(counter: Counter[str]) -> dict[str, int]:
@@ -107,11 +61,18 @@ def build_report(input_path: Path) -> dict[str, Any]:
                 except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as error:
                     raise _invalid(line_number, "candidate row is not valid UTF-8 JSON") from error
 
-                if isinstance(candidate, dict):
-                    row_schema = candidate.get("schemaVersion")
-                    if candidate_schema is None and isinstance(row_schema, str):
-                        candidate_schema = row_schema
-                    elif candidate_schema is not None and row_schema != candidate_schema:
+                violations = candidate_record_violations(candidate)
+                row_schema = (
+                    candidate.get("schemaVersion")
+                    if isinstance(candidate, dict)
+                    else None
+                )
+                if violations:
+                    if (
+                        violations == ["invalid-schema-version"]
+                        and candidate_schema is not None
+                        and isinstance(row_schema, str)
+                    ):
                         raise ReportError(
                             "inconsistent-candidate-schema",
                             "candidate rows use inconsistent schema versions",
@@ -121,8 +82,13 @@ def build_report(input_path: Path) -> dict[str, Any]:
                                 "line": line_number,
                             },
                         )
+                    raise _invalid(
+                        line_number,
+                        "candidate row does not satisfy time-candidate-v1",
+                    )
 
-                candidate = _validate_candidate(candidate, line_number)
+                if candidate_schema is None:
+                    candidate_schema = row_schema
                 candidate_count += 1
                 status_counts[candidate["status"]] += 1
                 precision_counts[candidate["precision"]] += 1

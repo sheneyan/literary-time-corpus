@@ -3,9 +3,19 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 
 FIXTURE = Path(__file__).parent / "fixtures" / "report" / "candidates.jsonl"
-FIXTURE_SHA256 = "020947ce7a90a02a4e5a38ba8bc5140a758f78b0ea03dfcc09c63bbe3624a02d"
+FIXTURE_SHA256 = "dad160f4bbdc71ab9b95b5143d5acc58196e863db49aa9a3425e7598787d36d7"
+
+
+def first_candidate() -> dict[str, object]:
+    return json.loads(FIXTURE.read_text(encoding="utf-8").splitlines()[0])
+
+
+def write_candidate(path: Path, candidate: dict[str, object]) -> None:
+    path.write_text(json.dumps(candidate) + "\n", encoding="utf-8")
 
 
 def test_report_summarizes_candidate_jsonl_deterministically(run_ltc, tmp_path: Path) -> None:
@@ -145,3 +155,103 @@ def test_report_rejects_invalid_candidate_shape_without_output(run_ltc, tmp_path
     assert result.returncode == 2
     assert json.loads(result.stderr)["error"]["code"] == "invalid-candidate-jsonl"
     assert not output.exists()
+
+
+@pytest.mark.parametrize(
+    "corruption",
+    [
+        "missing-candidate-id",
+        "invalid-source-hash",
+        "invalid-analysis-hash",
+        "missing-normalization-version",
+        "missing-extraction-version",
+        "missing-rule-id",
+        "matched-text-mismatch",
+        "context-mismatch",
+        "invalid-offset",
+        "segmentation-mismatch",
+        "invalid-source-hash-status",
+        "duplicate-reason",
+        "ambiguous-without-alternatives",
+        "approximate-with-normalized-time",
+    ],
+)
+def test_report_rejects_truncated_or_corrupt_candidate_artifacts(
+    run_ltc, tmp_path: Path, corruption: str
+) -> None:
+    candidate = first_candidate()
+    if corruption == "missing-candidate-id":
+        del candidate["candidateId"]
+    elif corruption == "invalid-source-hash":
+        candidate["sourceSha256"] = "bad"
+    elif corruption == "invalid-analysis-hash":
+        candidate["analysisTextSha256"] = "bad"
+    elif corruption == "missing-normalization-version":
+        candidate["normalizationVersion"] = ""
+    elif corruption == "missing-extraction-version":
+        candidate["extractionVersion"] = ""
+    elif corruption == "missing-rule-id":
+        del candidate["ruleId"]
+    elif corruption == "matched-text-mismatch":
+        candidate["matchedText"] = "01:18"
+    elif corruption == "context-mismatch":
+        candidate["context"] = "different"
+    elif corruption == "invalid-offset":
+        candidate["matchStartByte"] = -1
+    elif corruption == "segmentation-mismatch":
+        candidate["quoteAfter"] = "!"
+    elif corruption == "invalid-source-hash-status":
+        candidate["sourceHashStatus"] = "unverified"
+    elif corruption == "duplicate-reason":
+        candidate["warningReasonCodes"] = ["same", "same"]
+    elif corruption == "ambiguous-without-alternatives":
+        candidate["precision"] = "exact-minute-ambiguous"
+        candidate["normalizedTimes"] = []
+    elif corruption == "approximate-with-normalized-time":
+        candidate["precision"] = "approximate"
+
+    input_path = tmp_path / "corrupt.jsonl"
+    write_candidate(input_path, candidate)
+    output = tmp_path / "report.json"
+    output.write_bytes(b"preserve\n")
+
+    result = run_ltc("report", "--input", input_path, "--output", output)
+
+    assert result.returncode == 2
+    assert json.loads(result.stderr)["error"] == {
+        "code": "invalid-candidate-jsonl",
+        "details": {"line": 1},
+        "message": "candidate row does not satisfy time-candidate-v1",
+    }
+    assert output.read_bytes() == b"preserve\n"
+
+
+@pytest.mark.parametrize(
+    "field", ["unrecognizedField", "schemaVersion", "sourceId", "warningReasonCodes"]
+)
+def test_report_rejects_non_utf8_encodable_json_strings_without_overwriting(
+    run_ltc, tmp_path: Path, field: str
+) -> None:
+    candidate = first_candidate()
+    candidate[field] = ["\ud800"] if field == "warningReasonCodes" else "\ud800"
+    input_path = tmp_path / "surrogate.jsonl"
+    expected_line = 2 if field == "schemaVersion" else 1
+    if field == "schemaVersion":
+        input_path.write_text(
+            json.dumps(first_candidate()) + "\n" + json.dumps(candidate) + "\n",
+            encoding="utf-8",
+        )
+    else:
+        write_candidate(input_path, candidate)
+    output = tmp_path / "report.json"
+    output.write_bytes(b"preserve\n")
+
+    result = run_ltc("report", "--input", input_path, "--output", output)
+
+    assert result.returncode == 2
+    assert json.loads(result.stderr)["error"] == {
+        "code": "invalid-candidate-jsonl",
+        "details": {"line": expected_line},
+        "message": "candidate row does not satisfy time-candidate-v1",
+    }
+    assert output.read_bytes() == b"preserve\n"

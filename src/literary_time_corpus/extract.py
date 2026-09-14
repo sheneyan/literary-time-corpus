@@ -2,13 +2,11 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 import re
-import tempfile
 from pathlib import Path
 from typing import Any, Callable
 
-from literary_time_corpus.io import canonical_json_bytes
+from literary_time_corpus.io import write_jsonl_atomic
 
 
 SCHEMA_VERSION = "time-candidate-v1"
@@ -380,24 +378,6 @@ def extract_candidates(document: dict[str, Any]) -> list[dict[str, Any]]:
     )
 
 
-def _write_jsonl_atomic(path: Path, candidates: list[dict[str, Any]]) -> None:
-    path = path.resolve()
-    temporary_path: Path | None = None
-    try:
-        with tempfile.NamedTemporaryFile(
-            mode="wb", dir=path.parent, prefix=f".{path.name}.", delete=False
-        ) as temporary:
-            temporary_path = Path(temporary.name)
-            for candidate in candidates:
-                temporary.write(canonical_json_bytes(candidate))
-            temporary.flush()
-            os.fsync(temporary.fileno())
-        temporary_path.replace(path)
-    finally:
-        if temporary_path is not None:
-            temporary_path.unlink(missing_ok=True)
-
-
 def extract_file(input_path: Path, output_path: Path) -> None:
     document = _read_normalized(input_path)
-    _write_jsonl_atomic(output_path, extract_candidates(document))
+    write_jsonl_atomic(output_path, extract_candidates(document))

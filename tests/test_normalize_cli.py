@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import json
 import os
+import stat
+import subprocess
+import threading
 from pathlib import Path
 
 import pytest
@@ -155,6 +158,65 @@ def test_normalize_rejects_symlink_output_without_mutating_link_or_target(
     }
     assert output.is_symlink()
     assert target.read_text(encoding="utf-8") == "target must survive"
+
+
+def test_normalize_replaces_output_symlink_swapped_after_path_validation(
+    project_root: Path, tmp_path: Path
+) -> None:
+    source = tmp_path / "source.pipe"
+    os.mkfifo(source)
+    victim = tmp_path / "victim.json"
+    victim.write_bytes(b"victim must survive\n")
+    output = tmp_path / "normalized.json"
+    reader_open = threading.Event()
+    release_source = threading.Event()
+
+    def feed_source() -> None:
+        descriptor = os.open(source, os.O_WRONLY)
+        try:
+            reader_open.set()
+            assert release_source.wait(timeout=10)
+            os.write(descriptor, (FIXTURES / "valid.txt").read_bytes())
+        finally:
+            os.close(descriptor)
+
+    feeder = threading.Thread(target=feed_source)
+    feeder.start()
+    process = subprocess.Popen(
+        [
+            "uv",
+            "run",
+            "ltc",
+            "normalize",
+            "--input",
+            str(source),
+            "--output",
+            str(output),
+        ],
+        cwd=project_root,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    try:
+        assert reader_open.wait(timeout=10), "ltc did not open the coordinated input"
+        output.symlink_to(victim)
+        release_source.set()
+        _stdout, stderr = process.communicate(timeout=10)
+    finally:
+        release_source.set()
+        feeder.join(timeout=10)
+        if process.poll() is None:
+            process.kill()
+            process.wait(timeout=10)
+
+    assert process.returncode == 0, stderr
+    assert not output.is_symlink()
+    assert json.loads(output.read_text(encoding="utf-8"))["schemaVersion"] == (
+        "normalized-source-v1"
+    )
+    assert victim.read_bytes() == b"victim must survive\n"
+    assert stat.S_ISFIFO(source.lstat().st_mode)
 
 
 def test_normalize_preserves_domain_error_and_directory_output(
