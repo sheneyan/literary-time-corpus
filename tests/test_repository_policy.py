@@ -72,8 +72,8 @@ PRIVATE_KEY_MARKER = re.compile(
 )
 TOKEN_ASSIGNMENT = re.compile(
     rb"\b(?:api[_-]?key|access[_-]?token|secret[_-]?key)\b"
-    rb"\s*[:=]\s*(?:['\"][A-Za-z0-9_./+=-]{16,}['\"]|"
-    rb"[A-Za-z0-9_./+=-]{16,})(?=$|[\s;#])",
+    rb"['\"]?\s*[:=]\s*(?:['\"][A-Za-z0-9_./+=-]{16,}['\"]|"
+    rb"[A-Za-z0-9_./+=-]{16,}(?=$|[\s;#]))",
     re.IGNORECASE,
 )
 GUTENBERG_BODY_MARKER = re.compile(
@@ -323,6 +323,31 @@ def test_secret_filter_rejects_unquoted_export_assignment() -> None:
     )
 
     assert policy_violations({"README.md": unquoted_secret}) == ["README.md"]
+
+
+def test_secret_filter_rejects_quoted_assignments_before_closing_punctuation() -> None:
+    secret_value = b"0123456789abcdef"
+    files = {
+        "README.md": b'"api_' + b'key": "' + secret_value + b'",\n',
+        "docs/data-model.md": b'api_' + b'key = "' + secret_value + b'",\n',
+        "src/literary_time_corpus/cli.py": (
+            b'use(api_' + b'key="' + secret_value + b'")\n'
+        ),
+        "tests/conftest.py": (
+            b'{"access_' + b'token": "' + secret_value + b'"}\n'
+        ),
+    }
+
+    assert policy_violations(files) == sorted(files)
+
+
+def test_secret_filter_allows_short_placeholders_and_descriptive_prose() -> None:
+    files = {
+        "README.md": b'api_' + b'key = "replace-me"\n',
+        "docs/data-model.md": b"Document the access_" + b"token field.\n",
+    }
+
+    assert policy_violations(files) == []
 
 
 def test_body_marker_filter_rejects_this_project_family() -> None:
