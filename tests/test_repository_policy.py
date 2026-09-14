@@ -16,6 +16,69 @@ ALLOWED_ROOT_FILES = {
     PurePosixPath("pyproject.toml"),
     PurePosixPath("uv.lock"),
 }
+ALLOWED_DOC_FILES = {
+    PurePosixPath("docs/data-model.md"),
+    PurePosixPath("docs/evaluation-protocol.md"),
+    PurePosixPath("docs/operations/ubtmini-source-cache-plan.md"),
+    PurePosixPath("docs/pilot-design.md"),
+    PurePosixPath("docs/project-brief.md"),
+    PurePosixPath("docs/research/china-public-domain-policy.md"),
+    PurePosixPath("docs/research/gutenberg-private-mirror.md"),
+    PurePosixPath("docs/research/gutenberg-source-policy.md"),
+    PurePosixPath("docs/rights-policy.md"),
+    PurePosixPath("docs/superpowers/plans/2026-09-14-gate-2-pipeline.md"),
+    PurePosixPath("docs/superpowers/plans/2026-09-14-gutenberg-pilot-design.md"),
+    PurePosixPath("docs/superpowers/plans/2026-09-14-initial-repository.md"),
+    PurePosixPath(
+        "docs/superpowers/plans/2026-09-14-mirror-and-jurisdiction-policy.md"
+    ),
+    PurePosixPath("docs/superpowers/plans/2026-09-14-public-txt-scanner.md"),
+    PurePosixPath("docs/superpowers/specs/2026-09-14-initial-repository-design.md"),
+    PurePosixPath("docs/superpowers/specs/2026-09-14-public-txt-scanner-design.md"),
+}
+ALLOWED_SOURCE_FILES = {
+    PurePosixPath("src/literary_time_corpus/__init__.py"),
+    PurePosixPath("src/literary_time_corpus/__main__.py"),
+    PurePosixPath("src/literary_time_corpus/candidate.py"),
+    PurePosixPath("src/literary_time_corpus/cli.py"),
+    PurePosixPath("src/literary_time_corpus/encoding.py"),
+    PurePosixPath("src/literary_time_corpus/extract.py"),
+    PurePosixPath("src/literary_time_corpus/io.py"),
+    PurePosixPath("src/literary_time_corpus/normalize.py"),
+    PurePosixPath("src/literary_time_corpus/normalized.py"),
+    PurePosixPath("src/literary_time_corpus/report.py"),
+    PurePosixPath("src/literary_time_corpus/review.py"),
+    PurePosixPath("src/literary_time_corpus/scan.py"),
+    PurePosixPath("src/literary_time_corpus/validate.py"),
+}
+ALLOWED_TEST_FILES = {
+    PurePosixPath("tests/conftest.py"),
+    PurePosixPath("tests/test_encoding.py"),
+    PurePosixPath("tests/test_extract_cli.py"),
+    PurePosixPath("tests/test_input_paths_cli.py"),
+    PurePosixPath("tests/test_normalize_cli.py"),
+    PurePosixPath("tests/test_report_cli.py"),
+    PurePosixPath("tests/test_repository_policy.py"),
+    PurePosixPath("tests/test_scan_cli.py"),
+    PurePosixPath("tests/test_scan_transaction_cli.py"),
+    PurePosixPath("tests/test_validate_cli.py"),
+    PurePosixPath("tests/test_wheel_install.py"),
+}
+ALLOWED_REVIEWED_TEXT_FILES = (
+    ALLOWED_ROOT_FILES | ALLOWED_DOC_FILES | ALLOWED_SOURCE_FILES | ALLOWED_TEST_FILES
+)
+PRIVATE_KEY_MARKER = re.compile(
+    rb"-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----"
+)
+TOKEN_ASSIGNMENT = re.compile(
+    rb"\b(?:api[_-]?key|access[_-]?token|secret[_-]?key)\b"
+    rb"\s*[:=]\s*['\"][A-Za-z0-9_./+=-]{16,}['\"]",
+    re.IGNORECASE,
+)
+GUTENBERG_BODY_MARKER = re.compile(
+    rb"^\*\*\* (?:START|END) OF THE PROJECT GUTENBERG EBOOK\b",
+    re.MULTILINE,
+)
 ALLOWED_DATA_ROOT_PLACEHOLDER_BYTES = {
     PurePosixPath("manifests/.gitkeep"): b"",
     PurePosixPath("manifests/README.md"): (
@@ -93,6 +156,17 @@ def is_approved_synthetic_fixture(path: PurePosixPath, content: bytes) -> bool:
     )
 
 
+def has_disallowed_text_content(content: bytes) -> bool:
+    return any(
+        pattern.search(content) is not None
+        for pattern in (
+            PRIVATE_KEY_MARKER,
+            TOKEN_ASSIGNMENT,
+            GUTENBERG_BODY_MARKER,
+        )
+    )
+
+
 def policy_violations(files: Mapping[str, bytes]) -> list[str]:
     violations: list[str] = []
     for raw_path, content in files.items():
@@ -106,13 +180,9 @@ def policy_violations(files: Mapping[str, bytes]) -> list[str]:
             if expected_placeholder is None or content != expected_placeholder:
                 violations.append(raw_path)
             continue
-        if path in ALLOWED_ROOT_FILES:
-            continue
-        if path.parts[:1] == ("docs",) and path.suffix == ".md":
-            continue
-        if path.parts[:1] == ("src",) and path.suffix == ".py":
-            continue
-        if path.parts[:1] == ("tests",) and path.suffix == ".py":
+        if path in ALLOWED_REVIEWED_TEXT_FILES:
+            if has_disallowed_text_content(content):
+                violations.append(raw_path)
             continue
         violations.append(raw_path)
     return sorted(violations)
@@ -216,6 +286,31 @@ def test_unknown_tracked_paths_are_denied_even_without_known_content_suffixes() 
         "data/book.json": b'{"hidden":"payload"}\n',
         "sources/book": b"extensionless payload\n",
         "unexpected.yaml": b"payload: true\n",
+    }
+
+    assert policy_violations(files) == sorted(files)
+
+
+def test_familiar_suffixes_do_not_bypass_exact_reviewed_path_allowlists() -> None:
+    files = {
+        "docs/unapproved-book.md": b"unreviewed prose\n",
+        "src/literary_time_corpus/unexpected.py": b"VALUE = 'unreviewed'\n",
+        "tests/unexpected.py": b"def test_unreviewed(): pass\n",
+    }
+
+    assert policy_violations(files) == sorted(files)
+
+
+def test_allowed_text_paths_reject_likely_secrets_and_gutenberg_bodies() -> None:
+    private_key_marker = b"-----BEGIN " + b"PRIVATE KEY-----\n"
+    token_assignment = b"access_" + b"token = '0123456789abcdef0123456789abcdef'\n"
+    gutenberg_body_marker = (
+        b"*** START OF THE PROJECT " + b"GUTENBERG EBOOK UNREVIEWED ***\n"
+    )
+    files = {
+        "README.md": private_key_marker,
+        "src/literary_time_corpus/cli.py": token_assignment,
+        "docs/data-model.md": gutenberg_body_marker,
     }
 
     assert policy_violations(files) == sorted(files)

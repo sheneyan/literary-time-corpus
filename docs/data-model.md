@@ -437,9 +437,13 @@ That repository check is now implemented for the current Gate 2 boundary. It
 examines the tracked Git index without requiring a clean worktree and applies
 these conventions:
 
-- only the exact approved root project files, `docs/**/*.md`, `src/**/*.py`,
-  `tests/**/*.py`, the hash-pinned fixture inventory, and exact reserved-root
-  placeholders are accepted;
+- only files named in the exact reviewed root, documentation, package-source,
+  and Python-test path allowlists, the hash-pinned fixture inventory, and exact
+  reserved-root placeholders are accepted; a familiar suffix does not approve
+  a new path;
+- allowed text files receive a lightweight secondary check for common private-
+  key or token-assignment markers and standalone Project Gutenberg ebook body
+  markers; exact reviewed paths remain the primary control;
 - every file under `tests/fixtures/`, including JSON and JSONL, is approved only
   by its exact repository path and SHA-256 rather than by extension or a
   self-attested `synthetic` label; a copied path or one-byte change fails;
