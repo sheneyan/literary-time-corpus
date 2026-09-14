@@ -152,6 +152,7 @@ offsets and IDs, and repeated extraction is byte-identical.
 
 - Create `src/literary_time_corpus/validate.py`
 - Modify `src/literary_time_corpus/cli.py`
+- Create `tests/fixtures/validate/analysis.json`
 - Create `tests/fixtures/validate/candidate.json`
 - Create `tests/fixtures/validate/review.json`
 - Create `tests/fixtures/validate/rights.json`
@@ -164,6 +165,7 @@ command is absent. Define the public interface:
 
 ```bash
 ltc validate \
+  --analysis NORMALIZED_JSON \
   --candidate CANDIDATE_JSON \
   --review REVIEW_JSON \
   --rights RIGHTS_JSON \
@@ -181,7 +183,9 @@ other than `zi5-public-corpus-v1`.
 
 **Step 2: Implement the release projection**
 
-Validate all nine invariants in `docs/data-model.md`. Require one assessment
+Validate all nine invariants in `docs/data-model.md`, including recomputing the
+normalized analysis hash and selecting the candidate's excerpt and match from
+the exact UTF-8 byte spans in `--analysis`. Require one assessment
 each for `US` and `CN-mainland`, each with `workStatus=not-restricted` and
 `editionStatus=eligible`, plus aggregate `decision=eligible`. Copy only the
 approved provenance, attribution, exact excerpt segmentation, minute, rights

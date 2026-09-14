@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 from pathlib import Path
 from typing import Any, Callable
@@ -23,14 +24,16 @@ def run_validate(
     run_ltc,
     tmp_path: Path,
     *,
+    analysis: dict[str, Any] | None = None,
     candidate: dict[str, Any] | None = None,
     review: dict[str, Any] | None = None,
     rights: dict[str, Any] | None = None,
 ):
     documents = {
-        "candidate": candidate or load_fixture("candidate.json"),
-        "review": review or load_fixture("review.json"),
-        "rights": rights or load_fixture("rights.json"),
+        "analysis": analysis if analysis is not None else load_fixture("analysis.json"),
+        "candidate": candidate if candidate is not None else load_fixture("candidate.json"),
+        "review": review if review is not None else load_fixture("review.json"),
+        "rights": rights if rights is not None else load_fixture("rights.json"),
     }
     paths = {name: tmp_path / f"{name}.json" for name in documents}
     for name, document in documents.items():
@@ -38,6 +41,8 @@ def run_validate(
     output = tmp_path / "release.json"
     result = run_ltc(
         "validate",
+        "--analysis",
+        paths["analysis"],
         "--candidate",
         paths["candidate"],
         "--review",
@@ -114,6 +119,8 @@ def test_validate_projects_one_deterministic_release_record(run_ltc, tmp_path: P
     rights_path = tmp_path / "rights.json"
     second = run_ltc(
         "validate",
+        "--analysis",
+        tmp_path / "analysis.json",
         "--candidate",
         candidate_path,
         "--review",
@@ -125,6 +132,22 @@ def test_validate_projects_one_deterministic_release_record(run_ltc, tmp_path: P
     )
     assert second.returncode == 0, second.stderr
     assert output.read_bytes() == second_output.read_bytes()
+
+
+def test_validate_detects_same_length_analysis_tampering(run_ltc, tmp_path: Path) -> None:
+    analysis = load_fixture("analysis.json")
+    analysis["analysisText"] = analysis["analysisText"].replace("1:17", "1:18")
+    analysis["analysisTextSha256"] = hashlib.sha256(
+        analysis["analysisText"].encode("utf-8")
+    ).hexdigest()
+
+    result, output = run_validate(run_ltc, tmp_path, analysis=analysis)
+
+    assert result.returncode == 2
+    assert not output.exists()
+    violations = stderr_error(result)["details"]["violations"]
+    assert "analysis-hash-mismatch" in violations
+    assert "source-span-mismatch" in violations
 
 
 def set_path(document: dict[str, Any], path: str, value: Any) -> None:
@@ -179,6 +202,46 @@ NEGATIVE_CASES = [
 ]
 
 
+REQUIRED_FIELD_CASES = [
+    ("candidate", "status", _DELETE, "invalid-candidate-document"),
+    ("candidate", "status", "", "invalid-candidate-document"),
+    ("candidate", "exclusionReasonCodes", _DELETE, "invalid-candidate-document"),
+    ("candidate", "exclusionReasonCodes", "", "invalid-candidate-document"),
+    ("candidate", "exclusionReasonCodes", [""], "invalid-candidate-document"),
+    ("candidate", "warningReasonCodes", _DELETE, "invalid-candidate-document"),
+    ("candidate", "warningReasonCodes", "", "invalid-candidate-document"),
+    ("candidate", "warningReasonCodes", [""], "invalid-candidate-document"),
+    ("review", "decision", _DELETE, "invalid-review-document"),
+    ("review", "decision", "", "invalid-review-document"),
+    ("review", "reasonCodes", _DELETE, "invalid-review-document"),
+    ("review", "reasonCodes", "", "invalid-review-document"),
+    ("review", "reasonCodes", [""], "invalid-review-document"),
+    ("review", "unresolvedWarningReasonCodes", _DELETE, "invalid-review-document"),
+    ("review", "unresolvedWarningReasonCodes", "", "invalid-review-document"),
+    ("review", "unresolvedWarningReasonCodes", [""], "invalid-review-document"),
+    ("candidate", "provenance.provider", _DELETE, "invalid-candidate-document"),
+    ("candidate", "provenance.provider", "", "invalid-candidate-document"),
+    ("candidate", "provenance.providerItemId", _DELETE, "invalid-candidate-document"),
+    ("candidate", "provenance.providerItemId", "", "invalid-candidate-document"),
+    ("candidate", "provenance.sourcePageUrl", _DELETE, "invalid-candidate-document"),
+    ("candidate", "provenance.sourcePageUrl", "", "invalid-candidate-document"),
+    ("review", "attribution.workId", _DELETE, "invalid-review-document"),
+    ("review", "attribution.workId", "", "invalid-review-document"),
+    ("review", "attribution.title", _DELETE, "invalid-review-document"),
+    ("review", "attribution.title", "", "invalid-review-document"),
+    ("review", "attribution.author", _DELETE, "invalid-review-document"),
+    ("review", "attribution.author", "", "invalid-review-document"),
+    ("rights", "assessments.0.basisReasonCodes", _DELETE, "incomplete-jurisdiction-assessment"),
+    ("rights", "assessments.0.basisReasonCodes", [], "incomplete-jurisdiction-assessment"),
+    ("rights", "assessments.0.basisReasonCodes", [""], "incomplete-jurisdiction-assessment"),
+    ("rights", "assessments.1.evidenceReferences", _DELETE, "incomplete-jurisdiction-assessment"),
+    ("rights", "assessments.1.evidenceReferences", [], "incomplete-jurisdiction-assessment"),
+    ("rights", "assessments.1.evidenceReferences", [""], "incomplete-jurisdiction-assessment"),
+    ("rights", "assessments.0.reviewer", "", "incomplete-jurisdiction-assessment"),
+    ("rights", "assessments.1.decisionDate", "", "incomplete-jurisdiction-assessment"),
+]
+
+
 @pytest.mark.parametrize(
     ("document_name", "path", "value", "expected_violation"),
     NEGATIVE_CASES,
@@ -202,6 +265,29 @@ def test_validate_fails_closed_for_each_release_invariant(
     assert error["code"] == "release-validation-failed"
     assert expected_violation in error["details"]["violations"]
     assert error["details"]["violations"] == sorted(set(error["details"]["violations"]))
+
+
+@pytest.mark.parametrize(
+    ("document_name", "path", "value", "expected_violation"),
+    REQUIRED_FIELD_CASES,
+    ids=[f"{name}-{path}" for name, path, _value, _expected in REQUIRED_FIELD_CASES],
+)
+def test_validate_rejects_missing_or_blank_required_fields(
+    run_ltc,
+    tmp_path: Path,
+    document_name: str,
+    path: str,
+    value: Any,
+    expected_violation: str,
+) -> None:
+    changed = mutate_fixture(
+        document_name + ".json", lambda document: set_path(document, path, value)
+    )
+    result, output = run_validate(run_ltc, tmp_path, **{document_name: changed})
+
+    assert result.returncode == 2
+    assert not output.exists()
+    assert expected_violation in stderr_error(result)["details"]["violations"]
 
 
 def test_validate_reports_all_violations_in_stable_sorted_order(run_ltc, tmp_path: Path) -> None:
@@ -234,6 +320,8 @@ def test_validate_canonicalizes_required_jurisdiction_order(run_ltc, tmp_path: P
     second_output = tmp_path / "release-reordered-rights.json"
     second = run_ltc(
         "validate",
+        "--analysis",
+        tmp_path / "analysis.json",
         "--candidate",
         tmp_path / "candidate.json",
         "--review",
@@ -261,6 +349,29 @@ def test_validate_rejects_assessments_outside_the_profile(run_ltc, tmp_path: Pat
     assert "unexpected-jurisdiction" in stderr_error(result)["details"]["violations"]
 
 
+def test_validate_release_uses_nested_allowlists(run_ltc, tmp_path: Path) -> None:
+    candidate = load_fixture("candidate.json")
+    review = load_fixture("review.json")
+    rights = load_fixture("rights.json")
+    candidate["exactFileUrl"] = "SECRET exact file URL"
+    candidate["privateNote"] = "SECRET candidate note"
+    candidate["provenance"]["privateNote"] = "SECRET provenance note"
+    candidate["provenance"]["exactFileUrl"] = "SECRET nested exact file URL"
+    review["privateReviewerNote"] = "SECRET reviewer note"
+    review["attribution"]["privateNote"] = "SECRET attribution note"
+    rights["privateNote"] = "SECRET rights note"
+    rights["assessments"][0]["privateNote"] = "SECRET assessment note"
+
+    result, output = run_validate(
+        run_ltc, tmp_path, candidate=candidate, review=review, rights=rights
+    )
+
+    assert result.returncode == 0, result.stderr
+    release_text = output.read_text(encoding="utf-8")
+    assert "SECRET" not in release_text
+    assert "analysisText" not in json.loads(release_text)
+
+
 def test_validate_removes_existing_regular_output_on_failure(run_ltc, tmp_path: Path) -> None:
     candidate = mutate_fixture(
         "candidate.json", lambda document: document.update(precision="approximate")
@@ -272,6 +383,8 @@ def test_validate_removes_existing_regular_output_on_failure(run_ltc, tmp_path: 
     output.write_text("stale release", encoding="utf-8")
     result = run_ltc(
         "validate",
+        "--analysis",
+        tmp_path / "analysis.json",
         "--candidate",
         tmp_path / "candidate.json",
         "--review",
@@ -288,15 +401,19 @@ def test_validate_removes_existing_regular_output_on_failure(run_ltc, tmp_path: 
 def test_validate_rejects_output_aliases_without_damaging_inputs(run_ltc, tmp_path: Path) -> None:
     candidate = load_fixture("candidate.json")
     candidate_path = tmp_path / "candidate.json"
+    analysis_path = tmp_path / "analysis.json"
     review_path = tmp_path / "review.json"
     rights_path = tmp_path / "rights.json"
     write_document(candidate_path, candidate)
+    write_document(analysis_path, load_fixture("analysis.json"))
     write_document(review_path, load_fixture("review.json"))
     write_document(rights_path, load_fixture("rights.json"))
     before = candidate_path.read_bytes()
 
     result = run_ltc(
         "validate",
+        "--analysis",
+        analysis_path,
         "--candidate",
         candidate_path,
         "--review",
@@ -316,6 +433,8 @@ def test_validate_rejects_output_aliases_without_damaging_inputs(run_ltc, tmp_pa
     link.symlink_to(target)
     result = run_ltc(
         "validate",
+        "--analysis",
+        analysis_path,
         "--candidate",
         candidate_path,
         "--review",

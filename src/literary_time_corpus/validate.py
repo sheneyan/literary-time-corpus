@@ -43,13 +43,24 @@ def _string(value: Any) -> str | None:
     return value if isinstance(value, str) else None
 
 
+def _nonblank_string(value: Any) -> str | None:
+    return value if isinstance(value, str) and value.strip() else None
+
+
 def _string_list(value: Any) -> list[str] | None:
     if not isinstance(value, list) or any(not isinstance(item, str) for item in value):
         return None
     return value
 
 
-def _valid_offsets(candidate: dict[str, Any]) -> bool:
+def _nonblank_string_list(value: Any) -> list[str] | None:
+    values = _string_list(value)
+    if values is None or any(not item.strip() for item in values):
+        return None
+    return values
+
+
+def _offsets(candidate: dict[str, Any]) -> tuple[int, int, int, int] | None:
     names = (
         "excerptStartByte",
         "matchStartByte",
@@ -58,22 +69,36 @@ def _valid_offsets(candidate: dict[str, Any]) -> bool:
     )
     values = [candidate.get(name) for name in names]
     if any(not isinstance(value, int) or isinstance(value, bool) for value in values):
-        return False
+        return None
     excerpt_start, match_start, match_end, excerpt_end = values
     if not (0 <= excerpt_start <= match_start < match_end <= excerpt_end):
-        return False
+        return None
+    return excerpt_start, match_start, match_end, excerpt_end
 
-    excerpt = _string(candidate.get("excerpt"))
-    before = _string(candidate.get("quoteBefore"))
-    time = _string(candidate.get("quoteTime"))
-    after = _string(candidate.get("quoteAfter"))
-    if None in (excerpt, before, time, after):
-        return False
-    return (
-        excerpt_end - excerpt_start == len(excerpt.encode("utf-8"))
-        and match_start - excerpt_start == len(before.encode("utf-8"))
-        and match_end - match_start == len(time.encode("utf-8"))
-        and excerpt_end - match_end == len(after.encode("utf-8"))
+
+def _snapshot_spans_match(
+    analysis_text: str, candidate: dict[str, Any]
+) -> tuple[bool, bool]:
+    offsets = _offsets(candidate)
+    if offsets is None:
+        return False, False
+    excerpt_start, match_start, match_end, excerpt_end = offsets
+    analysis_bytes = analysis_text.encode("utf-8")
+    if excerpt_end > len(analysis_bytes):
+        return False, False
+    try:
+        excerpt = analysis_bytes[excerpt_start:excerpt_end].decode("utf-8")
+        before = analysis_bytes[excerpt_start:match_start].decode("utf-8")
+        matched = analysis_bytes[match_start:match_end].decode("utf-8")
+        after = analysis_bytes[match_end:excerpt_end].decode("utf-8")
+    except UnicodeDecodeError:
+        return False, False
+    return True, (
+        excerpt == candidate.get("excerpt")
+        and before == candidate.get("quoteBefore")
+        and matched == candidate.get("matchedText")
+        and matched == candidate.get("quoteTime")
+        and after == candidate.get("quoteAfter")
     )
 
 
@@ -143,22 +168,44 @@ def _rights_assessments(
         if assessment.get("editionStatus") != "eligible":
             violations.append("edition-status-not-eligible")
         required_evidence = (
-            _string_list(assessment.get("basisReasonCodes")),
-            _string_list(assessment.get("evidenceReferences")),
+            _nonblank_string_list(assessment.get("basisReasonCodes")),
+            _nonblank_string_list(assessment.get("evidenceReferences")),
         )
         if (
             any(not values for values in required_evidence)
-            or not _string(assessment.get("reviewer"))
-            or not _string(assessment.get("decisionDate"))
+            or not _nonblank_string(assessment.get("reviewer"))
+            or not _nonblank_string(assessment.get("decisionDate"))
         ):
             violations.append("incomplete-jurisdiction-assessment")
     return valid_objects
 
 
 def _collect_violations(
-    candidate: dict[str, Any], review: dict[str, Any], rights: dict[str, Any]
+    analysis: dict[str, Any],
+    candidate: dict[str, Any],
+    review: dict[str, Any],
+    rights: dict[str, Any],
 ) -> list[str]:
     violations: list[str] = []
+
+    analysis_text = _string(analysis.get("analysisText"))
+    carried_analysis_hash = _string(analysis.get("analysisTextSha256"))
+    actual_analysis_hash = (
+        hashlib.sha256(analysis_text.encode("utf-8")).hexdigest()
+        if analysis_text is not None
+        else None
+    )
+    if (
+        analysis.get("schemaVersion") != "normalized-source-v1"
+        or analysis_text is None
+        or carried_analysis_hash is None
+        or SHA256_PATTERN.fullmatch(carried_analysis_hash) is None
+        or carried_analysis_hash != actual_analysis_hash
+        or not _nonblank_string(analysis.get("sourceId"))
+        or not _nonblank_string(analysis.get("normalizationVersion"))
+        or SHA256_PATTERN.fullmatch(_string(analysis.get("sourceSha256")) or "") is None
+    ):
+        violations.append("invalid-analysis-document")
 
     if candidate.get("schemaVersion") != "time-candidate-v1":
         violations.append("invalid-candidate-document")
@@ -187,6 +234,22 @@ def _collect_violations(
     if quote_time is None or quote_time != candidate.get("matchedText"):
         violations.append("source-span-mismatch")
 
+    if candidate.get("analysisTextSha256") != actual_analysis_hash:
+        violations.append("analysis-hash-mismatch")
+    if (
+        candidate.get("sourceId") != analysis.get("sourceId")
+        or candidate.get("sourceSha256") != analysis.get("sourceSha256")
+        or candidate.get("normalizationVersion") != analysis.get("normalizationVersion")
+    ):
+        violations.append("source-identity-mismatch")
+    if analysis_text is not None:
+        valid_offsets, spans_match = _snapshot_spans_match(analysis_text, candidate)
+        if not valid_offsets:
+            violations.append("invalid-offsets")
+        elif not spans_match:
+            violations.append("invalid-offsets")
+            violations.append("source-span-mismatch")
+
     source_hash = _string(candidate.get("sourceSha256"))
     analysis_hash = _string(candidate.get("analysisTextSha256"))
     if (
@@ -196,7 +259,7 @@ def _collect_violations(
         or SHA256_PATTERN.fullmatch(analysis_hash) is None
     ):
         violations.append("invalid-hash")
-    if not _valid_offsets(candidate):
+    if _offsets(candidate) is None:
         violations.append("invalid-offsets")
     if candidate.get("candidateId") != _candidate_identity(candidate):
         violations.append("candidate-identity-mismatch")
@@ -219,7 +282,9 @@ def _collect_violations(
     if not _confirmed_excerpt_matches(candidate, review):
         violations.append("review-confirmed-excerpt-mismatch")
 
-    if candidate.get("warningReasonCodes") or review.get("unresolvedWarningReasonCodes"):
+    candidate_warnings = _nonblank_string_list(candidate.get("warningReasonCodes"))
+    review_warnings = _nonblank_string_list(review.get("unresolvedWarningReasonCodes"))
+    if candidate_warnings or review_warnings:
         violations.append("unresolved-warnings")
     if review.get("supersedingRejectionIds"):
         violations.append("superseding-rejection")
@@ -241,19 +306,45 @@ def _collect_violations(
         "extractionVersion",
         "matchedText",
     )
-    if any(not _string(candidate.get(field)) for field in required_candidate_strings):
+    candidate_reason_fields = (
+        _nonblank_string_list(candidate.get("exclusionReasonCodes")),
+        candidate_warnings,
+    )
+    if (
+        any(not _nonblank_string(candidate.get(field)) for field in required_candidate_strings)
+        or candidate.get("status")
+        not in {"detected", "awaiting-review", "reviewed", "automatically-excluded"}
+        or any(values is None for values in candidate_reason_fields)
+    ):
         violations.append("invalid-candidate-document")
     required_review_strings = ("reviewId", "reviewer", "reviewedAt")
+    review_reason_fields = (
+        _nonblank_string_list(review.get("reasonCodes")),
+        review_warnings,
+        _nonblank_string_list(review.get("supersedingRejectionIds")),
+    )
     if (
-        any(not _string(review.get(field)) for field in required_review_strings)
+        any(not _nonblank_string(review.get(field)) for field in required_review_strings)
+        or not _nonblank_string(review.get("decision"))
+        or any(values is None for values in review_reason_fields)
         or not isinstance(review.get("attribution"), dict)
     ):
         violations.append("invalid-review-document")
     required_rights_strings = ("decisionId", "reviewer", "decisionDate")
-    if any(not _string(rights.get(field)) for field in required_rights_strings):
+    if any(not _nonblank_string(rights.get(field)) for field in required_rights_strings):
         violations.append("invalid-rights-document")
-    if not isinstance(candidate.get("provenance"), dict):
+    provenance = candidate.get("provenance")
+    if not isinstance(provenance, dict) or any(
+        not _nonblank_string(provenance.get(field))
+        for field in ("provider", "providerItemId", "sourcePageUrl")
+    ):
         violations.append("invalid-candidate-document")
+    attribution = review.get("attribution")
+    if not isinstance(attribution, dict) or any(
+        not _nonblank_string(attribution.get(field))
+        for field in ("workId", "title", "author")
+    ):
+        violations.append("invalid-review-document")
 
     return sorted(set(violations))
 
@@ -263,7 +354,10 @@ def _project_release(
 ) -> dict[str, Any]:
     return {
         "analysisTextSha256": candidate["analysisTextSha256"],
-        "attribution": review["attribution"],
+        "attribution": {
+            field: review["attribution"][field]
+            for field in ("workId", "title", "author")
+        },
         "candidateId": candidate["candidateId"],
         "excerpt": candidate["excerpt"],
         "excerptEndByte": candidate["excerptEndByte"],
@@ -274,7 +368,10 @@ def _project_release(
         "matchedText": candidate["matchedText"],
         "normalizationVersion": candidate["normalizationVersion"],
         "normalizedTime": candidate["normalizedTimes"][0],
-        "provenance": candidate["provenance"],
+        "provenance": {
+            field: candidate["provenance"][field]
+            for field in ("provider", "providerItemId", "sourcePageUrl")
+        },
         "quoteAfter": candidate["quoteAfter"],
         "quoteBefore": candidate["quoteBefore"],
         "quoteTime": candidate["quoteTime"],
@@ -285,12 +382,26 @@ def _project_release(
             "reviewer": review["reviewer"],
         },
         "rights": {
-            "assessments": sorted(
-                rights["assessments"],
-                key=lambda assessment: {"US": 0, "CN-mainland": 1}[
-                    assessment["jurisdiction"]
-                ],
-            ),
+            "assessments": [
+                {
+                    field: assessment[field]
+                    for field in (
+                        "jurisdiction",
+                        "workStatus",
+                        "editionStatus",
+                        "basisReasonCodes",
+                        "evidenceReferences",
+                        "reviewer",
+                        "decisionDate",
+                    )
+                }
+                for assessment in sorted(
+                    rights["assessments"],
+                    key=lambda item: {"US": 0, "CN-mainland": 1}[
+                        item["jurisdiction"]
+                    ],
+                )
+            ],
             "decision": rights["decision"],
             "decisionDate": rights["decisionDate"],
             "decisionId": rights["decisionId"],
@@ -305,12 +416,17 @@ def _project_release(
 
 
 def validate_file(
-    candidate_path: Path, review_path: Path, rights_path: Path, output_path: Path
+    analysis_path: Path,
+    candidate_path: Path,
+    review_path: Path,
+    rights_path: Path,
+    output_path: Path,
 ) -> None:
+    analysis = _read_document(analysis_path, "analysis")
     candidate = _read_document(candidate_path, "candidate")
     review = _read_document(review_path, "review")
     rights = _read_document(rights_path, "rights")
-    violations = _collect_violations(candidate, review, rights)
+    violations = _collect_violations(analysis, candidate, review, rights)
     if violations:
         raise ReleaseValidationError(violations)
     write_json_atomic(output_path, _project_release(candidate, review, rights))

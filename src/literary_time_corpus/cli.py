@@ -41,6 +41,7 @@ def build_parser() -> argparse.ArgumentParser:
     extract.add_argument("--input", type=Path, required=True)
     extract.add_argument("--output", type=Path, required=True)
     validate = subparsers.add_parser("validate", help="validate a release candidate")
+    validate.add_argument("--analysis", type=Path, required=True)
     validate.add_argument("--candidate", type=Path, required=True)
     validate.add_argument("--review", type=Path, required=True)
     validate.add_argument("--rights", type=Path, required=True)
@@ -133,6 +134,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             return 0
         if arguments.command == "validate":
             for input_path in (
+                arguments.analysis,
                 arguments.candidate,
                 arguments.review,
                 arguments.rights,
@@ -141,6 +143,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             prior_output = regular_file_identity(arguments.output)
             try:
                 validate_file(
+                    arguments.analysis,
                     arguments.candidate,
                     arguments.review,
                     arguments.rights,
