@@ -86,6 +86,8 @@ missing, is not a directory, or otherwise cannot be opened safely return exit
 `2` with `error.code=invalid-output-path`.
 Inputs whose paths cannot be resolved safely, including symlink loops, return
 exit `2` with `error.code=invalid-input-path` before any output is changed.
+An empty candidates JSONL from a valid no-match extraction is not an error:
+`report` emits the deterministic `time-candidate-v1` zero-metrics report.
 
 Gate 2 keeps `manifests/`, `artifacts/`, and `releases/` closed by default. The
 repository policy permits only exact empty `.gitkeep` files or fixed root

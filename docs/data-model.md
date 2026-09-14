@@ -30,6 +30,12 @@ The synthetic CLI currently emits or accepts these schema and version fields:
 This version table describes only the locally verified synthetic interface. It
 is not an acquisition manifest or a dataset publication specification.
 
+A valid extraction may contain zero candidate rows. Reporting an empty JSONL
+therefore emits deterministic zero counts, zero coverage and duplicate
+fractions, empty maps/lists, the SHA-256 of empty bytes, and
+`candidateSchemaVersion=time-candidate-v1`; malformed nonempty rows still fail
+closed.
+
 ## Entity boundaries
 
 ### Work

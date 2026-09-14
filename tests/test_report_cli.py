@@ -75,6 +75,61 @@ def test_report_summarizes_candidate_jsonl_deterministically(run_ltc, tmp_path: 
     assert "timestamp" not in first.read_text(encoding="utf-8").lower()
 
 
+def test_report_accepts_deterministic_empty_no_match_extraction(
+    run_ltc, tmp_path: Path
+) -> None:
+    source = tmp_path / "no-time.txt"
+    source.write_text(
+        "Synthetic metadata\n"
+        "*** START OF THE PROJECT GUTENBERG EBOOK NO TIME ***\n"
+        "The synthetic room stayed quiet throughout the scene.\n"
+        "*** END OF THE PROJECT GUTENBERG EBOOK NO TIME ***\n",
+        encoding="utf-8",
+    )
+    normalized = tmp_path / "normalized.json"
+    candidates = tmp_path / "candidates.jsonl"
+    first = tmp_path / "first-report.json"
+    second = tmp_path / "second-report.json"
+
+    assert run_ltc("normalize", "--input", source, "--output", normalized).returncode == 0
+    extract_result = run_ltc("extract", "--input", normalized, "--output", candidates)
+    assert extract_result.returncode == 0, extract_result.stderr
+    assert candidates.read_bytes() == b""
+
+    first_result = run_ltc("report", "--input", candidates, "--output", first)
+    second_result = run_ltc("report", "--input", candidates, "--output", second)
+
+    assert first_result.returncode == second_result.returncode == 0
+    assert first.read_bytes() == second.read_bytes()
+    assert json.loads(first.read_text(encoding="utf-8")) == {
+        "candidateCount": 0,
+        "candidateSchemaVersion": "time-candidate-v1",
+        "coverageFraction": 0.0,
+        "duplicateConcentration": {
+            "duplicateCandidateCount": 0,
+            "duplicateFraction": 0.0,
+            "duplicateMinuteCount": 0,
+            "maxCandidatesPerMinute": 0,
+            "resolvedCandidateCount": 0,
+        },
+        "exclusionReasonCounts": {},
+        "inputSha256": (
+            "e3b0c44298fc1c149afbf4c8996fb924"
+            "27ae41e4649b934ca495991b7852b855"
+        ),
+        "precisionCounts": {},
+        "reportVersion": "report-v1",
+        "resolvedMinuteCount": 0,
+        "ruleFamilyCounts": {},
+        "schemaVersion": "candidate-report-v1",
+        "statusCounts": {},
+        "topDuplicateMinutes": [],
+        "uniqueResolvedMinutes": [],
+        "warningReasonCounts": {},
+    }
+    assert "timestamp" not in first.read_text(encoding="utf-8").lower()
+
+
 def test_report_reordered_rows_keep_metrics_but_change_input_hash(run_ltc, tmp_path: Path) -> None:
     rows = FIXTURE.read_bytes().splitlines(keepends=True)
     reordered_input = tmp_path / "reordered.jsonl"

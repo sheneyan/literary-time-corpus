@@ -104,9 +104,6 @@ def build_report(input_path: Path) -> dict[str, Any]:
             "invalid-candidate-jsonl", "could not read candidate JSONL"
         ) from error
 
-    if candidate_count == 0:
-        raise ReportError("invalid-candidate-jsonl", "candidate JSONL must not be empty")
-
     unique_minutes = sorted(minute_counts)
     resolved_candidate_count = sum(minute_counts.values())
     duplicate_candidate_count = resolved_candidate_count - len(unique_minutes)
@@ -118,7 +115,7 @@ def build_report(input_path: Path) -> dict[str, Any]:
 
     return {
         "candidateCount": candidate_count,
-        "candidateSchemaVersion": candidate_schema,
+        "candidateSchemaVersion": candidate_schema or EXPECTED_CANDIDATE_SCHEMA,
         "coverageFraction": len(unique_minutes) / MINUTES_PER_DAY,
         "duplicateConcentration": {
             "duplicateCandidateCount": duplicate_candidate_count,

@@ -250,6 +250,9 @@ canonical JSON. Include `schemaVersion`, report version, candidate schema
 version, input byte SHA-256, candidate count, resolved minute count, coverage
 fraction over 1,440 minutes, frequency maps, and the top duplicate minutes with
 a documented deterministic tie-break. Do not include wall-clock timestamps.
+Treat a valid empty extraction as a deterministic zero-metrics report with the
+current candidate schema version and empty-input SHA-256; do not relax parsing
+of malformed nonempty JSONL.
 
 **Step 3: Verify and commit**
 
