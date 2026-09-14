@@ -37,6 +37,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     normalize.add_argument("--input", type=Path, required=True)
     normalize.add_argument("--output", type=Path, required=True)
+    normalize.add_argument("--start-marker")
+    normalize.add_argument("--end-marker")
 
     extract = subparsers.add_parser("extract", help="extract time candidates")
     extract.add_argument("--input", type=Path, required=True)
@@ -102,8 +104,18 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         arguments = build_parser().parse_args(argv)
         if arguments.command == "normalize":
+            if (arguments.start_marker is None) != (arguments.end_marker is None):
+                raise CommandError(
+                    "invalid-arguments",
+                    "--start-marker and --end-marker must be supplied together",
+                )
             validate_normalize_paths(arguments.input, arguments.output)
-            normalize_file(arguments.input, arguments.output)
+            normalize_file(
+                arguments.input,
+                arguments.output,
+                start_marker=arguments.start_marker,
+                end_marker=arguments.end_marker,
+            )
             return 0
         if arguments.command == "extract":
             validate_normalize_paths(arguments.input, arguments.output)

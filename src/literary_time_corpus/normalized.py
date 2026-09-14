@@ -9,7 +9,13 @@ from literary_time_corpus.encoding import all_strings_encode_utf8
 
 NORMALIZED_SCHEMA_VERSION = "normalized-source-v1"
 NORMALIZATION_VERSION = "normalize-v1"
-TRANSFORMATION_METHOD = "project-gutenberg-marker-body-selection"
+FULL_FILE_TRANSFORMATION_METHOD = "full-file-selection"
+MARKER_TRANSFORMATION_METHOD = "literal-marker-body-selection"
+TRANSFORMATION_METHODS = {
+    FULL_FILE_TRANSFORMATION_METHOD,
+    MARKER_TRANSFORMATION_METHOD,
+}
+SOURCE_ID_PATTERN = re.compile(r"local_[0-9a-f]{12}")
 SHA256_PATTERN = re.compile(r"[0-9a-f]{64}")
 TRANSFORMATION_FIELDS = {
     "inputEndByte",
@@ -55,7 +61,9 @@ def normalized_record_violations(document: Any) -> list[str]:
     if (
         not isinstance(source_hash, str)
         or SHA256_PATTERN.fullmatch(source_hash) is None
-        or document.get("sourceId") != f"synthetic_{source_hash[:12]}"
+        or not isinstance(document.get("sourceId"), str)
+        or SOURCE_ID_PATTERN.fullmatch(document["sourceId"]) is None
+        or document.get("sourceId") != f"local_{source_hash[:12]}"
     ):
         violations.append("source-identity-mismatch")
 
@@ -86,7 +94,7 @@ def normalized_record_violations(document: Any) -> list[str]:
         }
         if (
             set(entry) != TRANSFORMATION_FIELDS
-            or entry.get("method") != TRANSFORMATION_METHOD
+            or entry.get("method") not in TRANSFORMATION_METHODS
             or any(value is None for value in offsets.values())
             or offsets["inputStartByte"] != body_start
             or offsets["inputEndByte"] != body_end

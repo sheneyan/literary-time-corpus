@@ -43,16 +43,16 @@ APPROVED_SYNTHETIC_FIXTURE_SHA256 = {
         "c1c4834297224e14b253c1ca913d9b31093a791e419368dddacb015146edbecb"
     ),
     PurePosixPath("tests/fixtures/validate/analysis.json"): (
-        "e231f0223fec15223c07d6d6295ec8c1a1cd1fb1e8c57a22510746e6c6e465de"
+        "8fde7f74b6762f8af60d2e6ff220a3324033a673a28a862637df039238fab541"
     ),
     PurePosixPath("tests/fixtures/validate/candidate.json"): (
-        "5c74acf99f2019a3d7f4c22e2e237450528118276dc3803deaf6e175ed7eb24b"
+        "f6391199b7314847e9c94cb25678fddc85372fd4b29c65084c77e07580561578"
     ),
     PurePosixPath("tests/fixtures/validate/review.json"): (
-        "2864557eefc66ea9eae432ea3412ae851d7fafad8e4d169ec32141086fc3d385"
+        "8622d876cc7ec23d4aaf00c33bcec01d905746215ed02ffadb27925fbb6e8d3e"
     ),
     PurePosixPath("tests/fixtures/validate/rights.json"): (
-        "005a15b40d8ede2663f6a7908b2d943f9ee9e338e25df555ad7af3249f53d2ad"
+        "975bd9dbdd56ce4a35551dba3d48c6a86b319263483335ed971ff2d6025c84b5"
     ),
 }
 

@@ -5,13 +5,13 @@
   "bodyStartByte": 0,
   "normalizationVersion": "normalize-v1",
   "schemaVersion": "normalized-source-v1",
-  "sourceId": "synthetic_aaaaaaaaaaaa",
+  "sourceId": "local_aaaaaaaaaaaa",
   "sourceSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
   "transformationLog": [
     {
       "inputEndByte": 137,
       "inputStartByte": 0,
-      "method": "project-gutenberg-marker-body-selection",
+      "method": "full-file-selection",
       "outputEndByte": 137,
       "outputStartByte": 0
     }

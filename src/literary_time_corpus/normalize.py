@@ -1,25 +1,16 @@
 from __future__ import annotations
 
 import hashlib
-import re
 from pathlib import Path
+from typing import Any
 
 from literary_time_corpus.io import write_json_atomic
 from literary_time_corpus.normalized import (
     NORMALIZATION_VERSION,
     NORMALIZED_SCHEMA_VERSION,
-    TRANSFORMATION_METHOD,
+    FULL_FILE_TRANSFORMATION_METHOD,
+    MARKER_TRANSFORMATION_METHOD,
     normalized_record_violations,
-)
-
-
-START_MARKER = re.compile(
-    rb"^\*\*\* START OF (?:THE|THIS) PROJECT GUTENBERG EBOOK[^\r\n]*\*\*\*\r?$",
-    re.MULTILINE,
-)
-END_MARKER = re.compile(
-    rb"^\*\*\* END OF (?:THE|THIS) PROJECT GUTENBERG EBOOK[^\r\n]*\*\*\*\r?$",
-    re.MULTILINE,
 )
 
 
@@ -29,44 +20,65 @@ class NormalizationError(ValueError):
         self.code = code
 
 
-def normalize_file(input_path: Path, output_path: Path) -> None:
-    try:
-        source = input_path.read_bytes()
-    except OSError as error:
-        raise NormalizationError("input-error", f"could not read source: {error}") from error
-
+def normalize_bytes(
+    source: bytes,
+    *,
+    start_marker: str | None = None,
+    end_marker: str | None = None,
+) -> dict[str, Any]:
     try:
         source.decode("utf-8", errors="strict")
     except UnicodeDecodeError as error:
         raise NormalizationError("invalid-utf8", "source is not valid UTF-8") from error
 
-    starts = list(START_MARKER.finditer(source))
-    ends = list(END_MARKER.finditer(source))
-    if len(starts) != 1 or len(ends) != 1:
+    if (start_marker is None) != (end_marker is None):
         raise NormalizationError(
             "invalid-markers",
-            "source must contain exactly one complete START/END marker pair",
+            "start and end markers must be supplied together",
         )
 
-    start = starts[0]
-    end = ends[0]
-    body_start = start.end()
-    if body_start >= len(source) or source[body_start : body_start + 1] != b"\n":
-        raise NormalizationError(
-            "invalid-markers",
-            "source must contain exactly one complete START/END marker pair",
-        )
-    body_start += 1
-
-    body_end = end.start()
-    if body_end <= body_start or source[body_end - 1 : body_end] != b"\n":
-        raise NormalizationError(
-            "invalid-markers",
-            "source must contain exactly one complete START/END marker pair",
-        )
-    body_end -= 1
-    if body_end > body_start and source[body_end - 1 : body_end] == b"\r":
-        body_end -= 1
+    if start_marker is None:
+        body_start = 0
+        body_end = len(source)
+        method = FULL_FILE_TRANSFORMATION_METHOD
+    else:
+        try:
+            start_marker_bytes = start_marker.encode("utf-8", errors="strict")
+            end_marker_bytes = end_marker.encode("utf-8", errors="strict")
+        except UnicodeEncodeError as error:
+            raise NormalizationError(
+                "invalid-markers", "markers must be valid UTF-8 text"
+            ) from error
+        if (
+            source.count(start_marker_bytes) != 1
+            or source.count(end_marker_bytes) != 1
+        ):
+            raise NormalizationError(
+                "invalid-markers",
+                "each marker must occur exactly once with start before end",
+            )
+        start_position = source.index(start_marker_bytes)
+        end_position = source.index(end_marker_bytes)
+        if start_position >= end_position:
+            raise NormalizationError(
+                "invalid-markers",
+                "each marker must occur exactly once with start before end",
+            )
+        body_start = start_position + len(start_marker_bytes)
+        body_end = end_position
+        if source[body_start : body_start + 2] == b"\r\n":
+            body_start += 2
+        elif source[body_start : body_start + 1] == b"\n":
+            body_start += 1
+        if source[body_end - 2 : body_end] == b"\r\n":
+            body_end -= 2
+        elif source[body_end - 1 : body_end] == b"\n":
+            body_end -= 1
+        if body_end <= body_start:
+            raise NormalizationError(
+                "invalid-markers", "markers select no body"
+            )
+        method = MARKER_TRANSFORMATION_METHOD
 
     analysis = source[body_start:body_end]
     if not analysis.decode("utf-8").strip():
@@ -81,13 +93,13 @@ def normalize_file(input_path: Path, output_path: Path) -> None:
         "bodyStartByte": body_start,
         "normalizationVersion": NORMALIZATION_VERSION,
         "schemaVersion": NORMALIZED_SCHEMA_VERSION,
-        "sourceId": f"synthetic_{source_hash[:12]}",
+        "sourceId": f"local_{source_hash[:12]}",
         "sourceSha256": source_hash,
         "transformationLog": [
             {
                 "inputEndByte": body_end,
                 "inputStartByte": body_start,
-                "method": TRANSFORMATION_METHOD,
+                "method": method,
                 "outputEndByte": len(analysis),
                 "outputStartByte": 0,
             }
@@ -97,4 +109,19 @@ def normalize_file(input_path: Path, output_path: Path) -> None:
         raise NormalizationError(
             "normalization-failed", "generated normalized record failed validation"
         )
+    return document
+
+
+def normalize_file(
+    input_path: Path,
+    output_path: Path,
+    *,
+    start_marker: str | None = None,
+    end_marker: str | None = None,
+) -> None:
+    try:
+        source = input_path.read_bytes()
+    except OSError as error:
+        raise NormalizationError("input-error", "could not read source") from error
+    document = normalize_bytes(source, start_marker=start_marker, end_marker=end_marker)
     write_json_atomic(output_path, document)

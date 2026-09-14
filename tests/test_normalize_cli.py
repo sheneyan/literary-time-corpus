@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import stat
@@ -11,6 +12,8 @@ import pytest
 
 
 FIXTURES = Path(__file__).parent / "fixtures" / "normalize"
+START_MARKER = "*** START OF THE PROJECT GUTENBERG EBOOK SYNTHETIC CLOCK ***"
+END_MARKER = "*** END OF THE PROJECT GUTENBERG EBOOK SYNTHETIC CLOCK ***"
 
 
 def parse_error(stderr: str) -> dict[str, object]:
@@ -27,48 +30,39 @@ def test_help_lists_the_four_approved_commands(run_ltc) -> None:
         assert command in result.stdout
 
 
-def test_normalize_preserves_the_exact_utf8_body_and_provenance(
+def test_normalize_without_marker_flags_preserves_the_complete_utf8_file(
     run_ltc, tmp_path: Path
 ) -> None:
+    source = tmp_path / "novel.txt"
+    source_bytes = "Préface 😀\nAt 13:15 the bell rang.\n".encode("utf-8")
+    source.write_bytes(source_bytes)
     output = tmp_path / "normalized.json"
 
-    result = run_ltc(
-        "normalize", "--input", FIXTURES / "valid.txt", "--output", output
-    )
+    result = run_ltc("normalize", "--input", source, "--output", output)
 
     assert result.returncode == 0, result.stderr
     document = json.loads(output.read_text(encoding="utf-8"))
-    expected_body = (
-        "At 1:17 a.m., café lamps still glowed.\n"
-        "  The second line keeps leading spaces.\n"
-    )
+    source_hash = hashlib.sha256(source_bytes).hexdigest()
     assert document == {
-        "analysisText": expected_body,
-        "analysisTextSha256": (
-            "13e61fdbb847a9956d83156ddc5a88e93bdd975aa93a8872477c1fffe66c96d5"
-        ),
-        "bodyEndByte": 179,
-        "bodyStartByte": 99,
+        "analysisText": source_bytes.decode("utf-8"),
+        "analysisTextSha256": source_hash,
+        "bodyEndByte": len(source_bytes),
+        "bodyStartByte": 0,
         "normalizationVersion": "normalize-v1",
         "schemaVersion": "normalized-source-v1",
-        "sourceId": "synthetic_5e4fb58e2bad",
-        "sourceSha256": (
-            "5e4fb58e2bad12b054d129295152fba067b6147b7f11e2fcc83799ab511ccfb1"
-        ),
+        "sourceId": f"local_{source_hash[:12]}",
+        "sourceSha256": source_hash,
         "transformationLog": [
             {
-                "inputEndByte": 179,
-                "inputStartByte": 99,
-                "method": "project-gutenberg-marker-body-selection",
-                "outputEndByte": 80,
+                "inputEndByte": len(source_bytes),
+                "inputStartByte": 0,
+                "method": "full-file-selection",
+                "outputEndByte": len(source_bytes),
                 "outputStartByte": 0,
             }
         ],
     }
-    source_bytes = (FIXTURES / "valid.txt").read_bytes()
-    assert source_bytes[document["bodyStartByte"] : document["bodyEndByte"]] == (
-        expected_body.encode("utf-8")
-    )
+    assert output.exists()
 
 
 def test_normalize_is_byte_deterministic(run_ltc, tmp_path: Path) -> None:
@@ -84,6 +78,82 @@ def test_normalize_is_byte_deterministic(run_ltc, tmp_path: Path) -> None:
 
     assert first_result.returncode == second_result.returncode == 0
     assert first.read_bytes() == second.read_bytes()
+
+
+def test_normalize_help_lists_optional_literal_marker_pair(run_ltc) -> None:
+    result = run_ltc("normalize", "--help")
+
+    assert result.returncode == 0, result.stderr
+    assert "--start-marker" in result.stdout
+    assert "--end-marker" in result.stdout
+
+
+def test_normalize_selects_literal_marker_body_with_multibyte_byte_offsets(
+    run_ltc, tmp_path: Path
+) -> None:
+    source = tmp_path / "source.txt"
+    source_bytes = (
+        f"Préface\r\n{START_MARKER}\r\n"
+        "At 1:17 a.m., café lamps still glowed.\r\n"
+        f"{END_MARKER}\r\nFooter\n"
+    ).encode("utf-8")
+    source.write_bytes(source_bytes)
+    output = tmp_path / "normalized.json"
+
+    result = run_ltc(
+        "normalize",
+        "--input",
+        source,
+        "--output",
+        output,
+        "--start-marker",
+        START_MARKER,
+        "--end-marker",
+        END_MARKER,
+    )
+
+    assert result.returncode == 0, result.stderr
+    document = json.loads(output.read_text(encoding="utf-8"))
+    body = "At 1:17 a.m., café lamps still glowed."
+    expected_start = source_bytes.index(START_MARKER.encode("utf-8")) + len(
+        START_MARKER.encode("utf-8")
+    ) + 2
+    expected_end = source_bytes.index(END_MARKER.encode("utf-8")) - 2
+    assert document["analysisText"] == body
+    assert document["bodyStartByte"] == expected_start
+    assert document["bodyEndByte"] == expected_end
+    assert document["transformationLog"] == [
+        {
+            "inputEndByte": expected_end,
+            "inputStartByte": expected_start,
+            "method": "literal-marker-body-selection",
+            "outputEndByte": len(body.encode("utf-8")),
+            "outputStartByte": 0,
+        }
+    ]
+    assert source_bytes[expected_start:expected_end] == body.encode("utf-8")
+
+
+@pytest.mark.parametrize("marker_option", ["--start-marker", "--end-marker"])
+def test_normalize_rejects_only_one_marker_option_and_preserves_output(
+    run_ltc, tmp_path: Path, marker_option: str
+) -> None:
+    output = tmp_path / "normalized.json"
+    output.write_bytes(b"keep\n")
+
+    result = run_ltc(
+        "normalize",
+        "--input",
+        FIXTURES / "valid.txt",
+        "--output",
+        output,
+        marker_option,
+        START_MARKER if marker_option == "--start-marker" else END_MARKER,
+    )
+
+    assert result.returncode == 2
+    assert parse_error(result.stderr)["error"]["code"] == "invalid-arguments"
+    assert output.read_bytes() == b"keep\n"
 
 
 def test_normalize_classifies_shared_writer_invalid_output_path(
@@ -112,36 +182,113 @@ def test_normalize_rejects_missing_start_marker(run_ltc, tmp_path: Path) -> None
         FIXTURES / "missing-start.txt",
         "--output",
         output,
+        "--start-marker",
+        START_MARKER,
+        "--end-marker",
+        END_MARKER,
     )
 
     assert result.returncode == 2
     assert parse_error(result.stderr) == {
         "error": {
             "code": "invalid-markers",
-            "message": "source must contain exactly one complete START/END marker pair",
+            "message": "each marker must occur exactly once with start before end",
         }
     }
     assert not output.exists()
 
 
-def test_normalize_rejects_effectively_empty_marker_body(run_ltc, tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    ("body", "error_code"), [("", "invalid-markers"), (" \t\r\n", "empty-body")]
+)
+def test_normalize_rejects_empty_or_whitespace_marker_body(
+    run_ltc, tmp_path: Path, body: str, error_code: str
+) -> None:
     source = tmp_path / "empty.txt"
     source.write_text(
         "Synthetic metadata\n"
         "*** START OF THE PROJECT GUTENBERG EBOOK EMPTY ***\n"
-        " \t\n"
+        f"{body}"
         "*** END OF THE PROJECT GUTENBERG EBOOK EMPTY ***\n",
         encoding="utf-8",
     )
     output = tmp_path / "normalized.json"
 
+    result = run_ltc(
+        "normalize",
+        "--input",
+        source,
+        "--output",
+        output,
+        "--start-marker",
+        "*** START OF THE PROJECT GUTENBERG EBOOK EMPTY ***",
+        "--end-marker",
+        "*** END OF THE PROJECT GUTENBERG EBOOK EMPTY ***",
+    )
+
+    assert result.returncode == 2
+    assert parse_error(result.stderr)["error"]["code"] == error_code
+    assert not output.exists()
+
+
+def test_normalize_rejects_adjacent_markers(run_ltc, tmp_path: Path) -> None:
+    source = tmp_path / "adjacent.txt"
+    source.write_text(f"{START_MARKER}{END_MARKER}", encoding="utf-8")
+    output = tmp_path / "normalized.json"
+
+    result = run_ltc(
+        "normalize",
+        "--input",
+        source,
+        "--output",
+        output,
+        "--start-marker",
+        START_MARKER,
+        "--end-marker",
+        END_MARKER,
+    )
+
+    assert result.returncode == 2
+    assert parse_error(result.stderr)["error"]["code"] == "invalid-markers"
+    assert not output.exists()
+
+
+@pytest.mark.parametrize("contents", [b"", b" \t\r\n"])
+def test_normalize_rejects_empty_or_whitespace_complete_file(
+    run_ltc, tmp_path: Path, contents: bytes
+) -> None:
+    source = tmp_path / "empty.txt"
+    source.write_bytes(contents)
+    output = tmp_path / "normalized.json"
+
     result = run_ltc("normalize", "--input", source, "--output", output)
 
     assert result.returncode == 2
-    assert parse_error(result.stderr)["error"] == {
-        "code": "empty-body",
-        "message": "source body must contain non-whitespace text",
-    }
+    assert parse_error(result.stderr)["error"]["code"] == "empty-body"
+    assert not output.exists()
+
+
+def test_normalize_rejects_reversed_markers(run_ltc, tmp_path: Path) -> None:
+    source = tmp_path / "reversed.txt"
+    source.write_text(
+        f"{END_MARKER}\nbody\n{START_MARKER}\n", encoding="utf-8"
+    )
+    output = tmp_path / "normalized.json"
+
+    result = run_ltc(
+        "normalize",
+        "--input",
+        source,
+        "--output",
+        output,
+        "--start-marker",
+        START_MARKER,
+        "--end-marker",
+        END_MARKER,
+    )
+
+    assert result.returncode == 2
+    assert parse_error(result.stderr)["error"]["code"] == "invalid-markers"
     assert not output.exists()
 
 
@@ -158,6 +305,10 @@ def test_normalize_preserves_preexisting_output_when_input_is_invalid(
         FIXTURES / "missing-start.txt",
         "--output",
         output,
+        "--start-marker",
+        START_MARKER,
+        "--end-marker",
+        END_MARKER,
     )
 
     assert result.returncode == 2
@@ -279,11 +430,33 @@ def test_normalize_preserves_domain_error_and_directory_output(
         FIXTURES / "missing-start.txt",
         "--output",
         output,
+        "--start-marker",
+        START_MARKER,
+        "--end-marker",
+        END_MARKER,
     )
 
     assert result.returncode == 2
     assert parse_error(result.stderr)["error"]["code"] == "invalid-markers"
     assert output.is_dir()
+
+
+def test_normalize_rejects_directory_input_without_leaking_path(
+    run_ltc, tmp_path: Path
+) -> None:
+    source = tmp_path / "private-source-name"
+    source.mkdir()
+    output = tmp_path / "normalized.json"
+
+    result = run_ltc("normalize", "--input", source, "--output", output)
+
+    assert result.returncode == 2
+    assert parse_error(result.stderr)["error"] == {
+        "code": "input-error",
+        "message": "could not read source",
+    }
+    assert "private-source-name" not in result.stderr
+    assert not output.exists()
 
 
 def test_normalize_does_not_delete_non_regular_output_on_failure(
@@ -298,6 +471,10 @@ def test_normalize_does_not_delete_non_regular_output_on_failure(
         FIXTURES / "missing-start.txt",
         "--output",
         output,
+        "--start-marker",
+        START_MARKER,
+        "--end-marker",
+        END_MARKER,
     )
 
     assert result.returncode == 2
@@ -308,16 +485,26 @@ def test_normalize_does_not_delete_non_regular_output_on_failure(
 def test_normalize_rejects_duplicate_markers(run_ltc, tmp_path: Path) -> None:
     source = tmp_path / "duplicate.txt"
     source.write_text(
-        "*** START OF THE PROJECT GUTENBERG EBOOK FIRST ***\n"
+        f"{START_MARKER}\n"
         "first\n"
-        "*** START OF THE PROJECT GUTENBERG EBOOK SECOND ***\n"
+        f"{START_MARKER}\n"
         "second\n"
-        "*** END OF THE PROJECT GUTENBERG EBOOK SECOND ***\n",
+        f"{END_MARKER}\n",
         encoding="utf-8",
     )
     output = tmp_path / "normalized.json"
 
-    result = run_ltc("normalize", "--input", source, "--output", output)
+    result = run_ltc(
+        "normalize",
+        "--input",
+        source,
+        "--output",
+        output,
+        "--start-marker",
+        START_MARKER,
+        "--end-marker",
+        END_MARKER,
+    )
 
     assert result.returncode == 2
     assert parse_error(result.stderr)["error"]["code"] == "invalid-markers"

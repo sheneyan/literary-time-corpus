@@ -1,6 +1,6 @@
 {
   "analysisTextSha256": "c0e400073bd53d669956a92c9cd1c8b95c86dd650ea999ce51773d0c7c9592a4",
-  "candidateId": "c07d761d17671a915b63b5a305f2095bd1a9b4a27071feb4e02680f5229588ff",
+  "candidateId": "0ecdc8f2b852bb33a43b7912f4f8d4e902a45cb5260fba288c4303b981dcb824",
   "context": "钟声响起。At 1:17 a.m., he left.",
   "contextualResolution": {
     "evidenceEndByte": 127,
@@ -30,7 +30,7 @@
   "ruleFamily": "numeric-12-hour",
   "ruleId": "numeric-12h-meridiem-v1",
   "schemaVersion": "time-candidate-v1",
-  "sourceId": "synthetic_aaaaaaaaaaaa",
+  "sourceId": "local_aaaaaaaaaaaa",
   "sourceHashStatus": "carried-from-normalization",
   "sourceSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
   "status": "awaiting-review",
