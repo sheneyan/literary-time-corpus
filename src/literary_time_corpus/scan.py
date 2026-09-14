@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import errno
 import hashlib
 import ipaddress
 import json
 import os
 import re
+import secrets
+import shutil
 import stat
 import tempfile
 import unicodedata
@@ -393,29 +396,68 @@ def _cleanup_failed(
 def _retain_path_entry_in_quarantine(
     path: Path,
     expected_identity: DirectoryIdentity | None,
+    *,
+    parent_fd: int | None = None,
+    parent_identity: DirectoryIdentity | None = None,
 ) -> dict[str, object] | None:
-    try:
-        quarantine = Path(
-            tempfile.mkdtemp(
-                prefix=f".{path.name}.quarantine-",
-                dir=path.parent,
+    parent_status = (
+        _anchored_parent_status(path.parent, parent_identity)
+        if parent_identity is not None
+        else "current"
+    )
+    if parent_fd is not None:
+        for _ in range(100):
+            quarantine_name = f".{path.name}.quarantine-{secrets.token_hex(8)}"
+            try:
+                os.mkdir(quarantine_name, mode=0o700, dir_fd=parent_fd)
+                break
+            except FileExistsError:
+                continue
+            except OSError:
+                error = _cleanup_failed(path)
+                error.details["parentPathStatus"] = parent_status
+                error.details["retentionScope"] = "original-parent"
+                raise error from None
+        else:
+            error = _cleanup_failed(path)
+            error.details["parentPathStatus"] = parent_status
+            error.details["retentionScope"] = "original-parent"
+            raise error
+        quarantine = path.parent / quarantine_name
+    else:
+        try:
+            quarantine = Path(
+                tempfile.mkdtemp(
+                    prefix=f".{path.name}.quarantine-",
+                    dir=path.parent,
+                )
             )
-        )
-    except OSError:
-        raise _cleanup_failed(path) from None
-    try:
-        quarantine.chmod(0o700)
-    except OSError:
-        raise _cleanup_failed(
-            path,
-            retained_path_basename=quarantine.name,
-        ) from None
+        except OSError:
+            raise _cleanup_failed(path) from None
+        try:
+            quarantine.chmod(0o700)
+        except OSError:
+            raise _cleanup_failed(
+                path,
+                retained_path_basename=quarantine.name,
+            ) from None
     moved_entry = quarantine / "entry"
     try:
-        os.rename(path, moved_entry)
+        if parent_fd is None:
+            os.rename(path, moved_entry)
+        else:
+            os.rename(
+                _relative_to_parent(path, path.parent),
+                _relative_to_parent(moved_entry, path.parent),
+                src_dir_fd=parent_fd,
+                dst_dir_fd=parent_fd,
+            )
     except OSError:
         try:
-            quarantine.rmdir()
+            if parent_fd is None:
+                quarantine.rmdir()
+            else:
+                os.rmdir(quarantine.name, dir_fd=parent_fd)
         except OSError:
             raise _cleanup_failed(
                 path,
@@ -424,25 +466,86 @@ def _retain_path_entry_in_quarantine(
         raise _cleanup_failed(path) from None
 
     try:
-        moved_status = moved_entry.lstat()
+        moved_status = (
+            moved_entry.lstat()
+            if parent_fd is None
+            else os.stat(
+                _relative_to_parent(moved_entry, path.parent),
+                dir_fd=parent_fd,
+                follow_symlinks=False,
+            )
+        )
     except OSError:
         raise _cleanup_failed(
             path,
             retained_path_basename=quarantine.name,
         ) from None
     moved_identity = (moved_status.st_dev, moved_status.st_ino)
-    return {
+    result: dict[str, object] = {
         "identityMatched": (
             expected_identity is not None
             and stat.S_ISDIR(moved_status.st_mode)
             and moved_identity == expected_identity
         ),
-        "officialPathStatus": _path_entry_status(path),
+        "officialPathStatus": (
+            _path_entry_status(path)
+            if parent_fd is None
+            else _entry_status_at_anchor(path, path.parent, parent_fd)
+        ),
         "retainedPathBasename": quarantine.name,
     }
+    if parent_status != "current":
+        result["parentPathStatus"] = parent_status
+        result["retentionScope"] = (
+            "original-parent" if parent_fd is not None else "replacement-parent"
+        )
+    return result
 
 
-def _make_private_container(path: Path, purpose: str) -> Path:
+def _make_private_container(
+    path: Path,
+    purpose: str,
+    *,
+    parent_fd: int | None = None,
+) -> Path:
+    if parent_fd is not None:
+        for _ in range(100):
+            container_name = f".{path.name}.{purpose}-{secrets.token_hex(8)}"
+            try:
+                os.mkdir(container_name, mode=0o700, dir_fd=parent_fd)
+                break
+            except FileExistsError:
+                continue
+            except OSError as error:
+                raise ScanError(
+                    "invalid-output-path",
+                    "could not create private transaction directory",
+                    stage="publication",
+                ) from error
+        else:
+            raise ScanError(
+                "invalid-output-path",
+                "could not create private transaction directory",
+                stage="publication",
+            )
+        container = path.parent / container_name
+        try:
+            os.chmod(
+                container_name,
+                0o700,
+                dir_fd=parent_fd,
+                follow_symlinks=False,
+            )
+        except OSError as error:
+            setup_error = ScanError(
+                "invalid-output-path",
+                "could not secure private transaction directory",
+                stage="publication",
+            )
+            setup_error.details["retainedBackupBasename"] = container.name
+            setup_error.details["retentionScope"] = "original-parent"
+            raise setup_error from error
+        return container
     try:
         container = Path(
             tempfile.mkdtemp(
@@ -469,7 +572,13 @@ def _make_private_container(path: Path, purpose: str) -> Path:
     return container
 
 
-def _rename_no_replace(source: Path, destination: Path) -> None:
+def _rename_no_replace(
+    source: Path,
+    destination: Path,
+    *,
+    src_dir_fd: int | None = None,
+    dst_dir_fd: int | None = None,
+) -> None:
     """Rename without ever replacing the destination path entry."""
     import ctypes
     import errno
@@ -480,22 +589,27 @@ def _rename_no_replace(source: Path, destination: Path) -> None:
     destination_bytes = os.fsencode(destination)
     if sys.platform == "darwin" and hasattr(libc, "renameatx_np"):
         result = libc.renameatx_np(
-            -2,
+            -2 if src_dir_fd is None else src_dir_fd,
             ctypes.c_char_p(source_bytes),
-            -2,
+            -2 if dst_dir_fd is None else dst_dir_fd,
             ctypes.c_char_p(destination_bytes),
             0x00000004,
         )
     elif hasattr(libc, "renameat2"):
         result = libc.renameat2(
-            -100,
+            -100 if src_dir_fd is None else src_dir_fd,
             ctypes.c_char_p(source_bytes),
-            -100,
+            -100 if dst_dir_fd is None else dst_dir_fd,
             ctypes.c_char_p(destination_bytes),
             1,
         )
     elif os.name == "nt":
-        # Windows rename already fails when the destination exists.
+        # This is a guarded fallback, not a claim of atomic no-replace on every
+        # Windows filesystem/API combination.
+        if src_dir_fd is not None or dst_dir_fd is not None:
+            raise OSError(errno.ENOTSUP, "directory descriptors are unavailable")
+        if destination.exists() or destination.is_symlink():
+            raise FileExistsError(errno.EEXIST, "destination exists")
         os.rename(source, destination)
         return
     else:
@@ -503,6 +617,114 @@ def _rename_no_replace(source: Path, destination: Path) -> None:
     if result != 0:
         error_number = ctypes.get_errno()
         raise OSError(error_number, os.strerror(error_number))
+
+
+def _open_parent_descriptor(
+    parent: Path,
+    expected_identity: DirectoryIdentity,
+) -> int | None:
+    required = (
+        os.open,
+        os.rename,
+        os.stat,
+        os.unlink,
+        os.rmdir,
+        os.mkdir,
+        os.chmod,
+    )
+    if not all(
+        function in os.supports_dir_fd for function in required
+    ) or os.chmod not in os.supports_follow_symlinks:
+        return None
+    try:
+        descriptor = os.open(
+            parent,
+            os.O_RDONLY
+            | getattr(os, "O_DIRECTORY", 0)
+            | getattr(os, "O_NOFOLLOW", 0),
+        )
+    except (NotImplementedError, TypeError):
+        return None
+    except OSError as error:
+        if error.errno in {errno.ENOSYS, errno.ENOTSUP, errno.EINVAL}:
+            return None
+        raise ScanError(
+            "invalid-output-path",
+            "could not anchor output parent",
+            stage="publication",
+        ) from error
+    status = os.fstat(descriptor)
+    if (
+        not stat.S_ISDIR(status.st_mode)
+        or (status.st_dev, status.st_ino) != expected_identity
+    ):
+        os.close(descriptor)
+        raise ScanError(
+            "unsafe-output-path",
+            "output parent changed before transaction",
+            stage="publication",
+        )
+    return descriptor
+
+
+def _relative_to_parent(path: Path, parent: Path) -> Path:
+    relative = Path(os.path.relpath(path.absolute(), parent.absolute()))
+    if relative == Path(".") or relative.is_absolute() or ".." in relative.parts:
+        raise OSError("transaction path escaped parent")
+    return relative
+
+
+def _transaction_rename_no_replace(
+    source: Path,
+    destination: Path,
+    parent: Path,
+    parent_fd: int | None,
+) -> None:
+    if parent_fd is None:
+        _rename_no_replace(source, destination)
+        return
+    _rename_no_replace(
+        _relative_to_parent(source, parent),
+        _relative_to_parent(destination, parent),
+        src_dir_fd=parent_fd,
+        dst_dir_fd=parent_fd,
+    )
+
+
+def _anchored_parent_status(
+    parent: Path,
+    expected_identity: DirectoryIdentity,
+) -> str:
+    try:
+        status = parent.lstat()
+    except FileNotFoundError:
+        return "absent"
+    except OSError:
+        return "unknown"
+    if stat.S_ISDIR(status.st_mode) and (
+        status.st_dev,
+        status.st_ino,
+    ) == expected_identity:
+        return "current"
+    return "replaced"
+
+
+def _entry_status_at_anchor(
+    path: Path,
+    parent: Path,
+    parent_fd: int,
+) -> str:
+    try:
+        os.stat(
+            _relative_to_parent(path, parent),
+            dir_fd=parent_fd,
+            follow_symlinks=False,
+        )
+    except FileNotFoundError:
+        return "absent"
+    except OSError:
+        return "unknown"
+    return "present"
 
 
 def _remove_directory_contents(directory_fd: int) -> None:
@@ -546,6 +768,31 @@ def _remove_directory_contents(directory_fd: int) -> None:
             os.unlink(name, dir_fd=directory_fd)
 
 
+def _remove_owned_backup_by_path(
+    container: Path,
+    entry: Path,
+    expected_identity: DirectoryIdentity,
+) -> None:
+    if _directory_identity(entry) != expected_identity:
+        raise OSError("backup identity changed")
+    # Portable fallback for platforms without fd traversal. The old tree is
+    # explicitly authorized and rechecked immediately before deletion;
+    # pathname APIs retain the documented same-UID final syscall limitation.
+    use_fd_functions = getattr(shutil, "_use_fd_functions", None)
+    try:
+        if use_fd_functions is not None:
+            shutil._use_fd_functions = False
+        shutil.rmtree(entry)
+    finally:
+        if use_fd_functions is not None:
+            shutil._use_fd_functions = use_fd_functions
+    container.rmdir()
+
+
+def _requires_path_cleanup() -> bool:
+    return os.name == "nt"
+
+
 def _remove_owned_backup(
     container: Path,
     entry: Path,
@@ -555,16 +802,41 @@ def _remove_owned_backup(
     try:
         if _directory_identity(entry) != expected_identity:
             raise OSError("backup identity changed")
-        descriptor = os.open(
-            entry,
-            os.O_RDONLY
-            | getattr(os, "O_DIRECTORY", 0)
-            | getattr(os, "O_NOFOLLOW", 0),
-        )
+        if _requires_path_cleanup():
+            _remove_owned_backup_by_path(container, entry, expected_identity)
+            return
+        try:
+            descriptor = os.open(
+                entry,
+                os.O_RDONLY
+                | getattr(os, "O_DIRECTORY", 0)
+                | getattr(os, "O_NOFOLLOW", 0),
+            )
+        except (NotImplementedError, TypeError):
+            _remove_owned_backup_by_path(container, entry, expected_identity)
+            return
+        except OSError as error:
+            if error.errno not in {errno.ENOSYS, errno.ENOTSUP, errno.EINVAL}:
+                raise
+            _remove_owned_backup_by_path(container, entry, expected_identity)
+            return
         opened = os.fstat(descriptor)
         if (opened.st_dev, opened.st_ino) != expected_identity:
             raise OSError("backup identity changed")
-        _remove_directory_contents(descriptor)
+        use_path_fallback = False
+        try:
+            _remove_directory_contents(descriptor)
+        except (NotImplementedError, TypeError):
+            use_path_fallback = True
+        except OSError as error:
+            if error.errno not in {errno.ENOSYS, errno.ENOTSUP, errno.EINVAL}:
+                raise
+            use_path_fallback = True
+        if use_path_fallback:
+            os.close(descriptor)
+            descriptor = None
+            _remove_owned_backup_by_path(container, entry, expected_identity)
+            return
         if _directory_identity(entry) != expected_identity:
             raise OSError("backup identity changed")
         os.rmdir(entry)
@@ -575,8 +847,9 @@ def _remove_owned_backup(
 
 
 def _attach_retention(error: ScanError, retention: dict[str, object]) -> None:
-    error.details["officialPathStatus"] = retention["officialPathStatus"]
-    error.details["retainedPathBasename"] = retention["retainedPathBasename"]
+    for key, value in retention.items():
+        if key != "identityMatched":
+            error.details[key] = value
 
 
 def _staging_failure(error: Exception) -> ScanError:
@@ -894,6 +1167,7 @@ def scan_file(
     old_target_moved = False
     new_target_published = False
     backup_finalized = False
+    parent_fd: int | None = None
     try:
         created_directory_identity = _directory_identity(staging_path)
         if not _directory_matches_identity(
@@ -930,6 +1204,11 @@ def scan_file(
                 stage="publication",
             )
 
+        parent_fd = _open_parent_descriptor(
+            output_path.parent,
+            output_parent_identity,
+        )
+
         if existing_target is not None:
             if not _target_still_matches(output_path, existing_target):
                 raise ScanError(
@@ -937,10 +1216,19 @@ def scan_file(
                     "output directory changed before publication",
                     stage="publication",
                 )
-            backup_container = _make_private_container(output_path, "backup")
+            backup_container = _make_private_container(
+                output_path,
+                "backup",
+                parent_fd=parent_fd,
+            )
             backup_entry = backup_container / "entry"
             try:
-                _rename_no_replace(output_path, backup_entry)
+                _transaction_rename_no_replace(
+                    output_path,
+                    backup_entry,
+                    output_path.parent,
+                    parent_fd,
+                )
             except OSError as error:
                 raise ScanError(
                     "invalid-output-path",
@@ -948,6 +1236,19 @@ def scan_file(
                     stage="publication",
                 ) from error
             old_target_moved = True
+            parent_path_status = _anchored_parent_status(
+                output_path.parent,
+                output_parent_identity,
+            )
+            if parent_path_status != "current":
+                parent_error = ScanError(
+                    "unsafe-output-path",
+                    "output parent changed during publication",
+                    stage="publication",
+                )
+                parent_error.details["parentPathStatus"] = parent_path_status
+                parent_error.details["retentionScope"] = "original-parent"
+                raise parent_error
             if _directory_identity(backup_entry) != existing_target.identity:
                 raise ScanError(
                     "unsafe-output-path",
@@ -955,7 +1256,12 @@ def scan_file(
                     stage="publication",
                 )
         try:
-            _rename_no_replace(staging_path, output_path)
+            _transaction_rename_no_replace(
+                staging_path,
+                output_path,
+                output_path.parent,
+                parent_fd,
+            )
         except OSError as error:
             raise ScanError(
                 "invalid-output-path",
@@ -963,6 +1269,19 @@ def scan_file(
                 stage="publication",
             ) from error
         new_target_published = True
+        parent_path_status = _anchored_parent_status(
+            output_path.parent,
+            output_parent_identity,
+        )
+        if parent_path_status != "current":
+            parent_error = ScanError(
+                "unsafe-output-path",
+                "output parent changed during publication",
+                stage="publication",
+            )
+            parent_error.details["parentPathStatus"] = parent_path_status
+            parent_error.details["retentionScope"] = "original-parent"
+            raise parent_error
         if _directory_identity(output_path) != created_directory_identity:
             raise _verification_failed()
         _verify_staging(
@@ -974,6 +1293,15 @@ def scan_file(
             end_marker=end_marker,
             expected_identities=artifact_identities,
         )
+        parent_path_status = _anchored_parent_status(
+            output_path.parent,
+            output_parent_identity,
+        )
+        if parent_path_status != "current":
+            parent_error = _verification_failed()
+            parent_error.details["parentPathStatus"] = parent_path_status
+            parent_error.details["retentionScope"] = "original-parent"
+            raise parent_error
 
         if backup_container is not None and backup_entry is not None:
             try:
@@ -990,6 +1318,23 @@ def scan_file(
                 cleanup_error.details["retainedBackupBasename"] = (
                     backup_container.name
                 )
+                parent_path_status = _anchored_parent_status(
+                    output_path.parent,
+                    output_parent_identity,
+                )
+                if parent_path_status != "current":
+                    cleanup_error.details["parentPathStatus"] = (
+                        parent_path_status
+                    )
+                    cleanup_error.details["retentionScope"] = "original-parent"
+                    if parent_fd is not None:
+                        cleanup_error.details["officialPathStatus"] = (
+                            _entry_status_at_anchor(
+                                output_path,
+                                output_path.parent,
+                                parent_fd,
+                            )
+                        )
                 raise cleanup_error from None
             backup_finalized = True
             if _directory_identity(output_path) != created_directory_identity:
@@ -1008,6 +1353,15 @@ def scan_file(
                 output_path, created_directory_identity
             ):
                 raise _verification_failed()
+        parent_path_status = _anchored_parent_status(
+            output_path.parent,
+            output_parent_identity,
+        )
+        if parent_path_status != "current":
+            parent_error = _verification_failed()
+            parent_error.details["parentPathStatus"] = parent_path_status
+            parent_error.details["retentionScope"] = "original-parent"
+            raise parent_error
         return {
             "candidateCount": counts["candidateCount"],
             "outputName": output_path.name,
@@ -1016,6 +1370,28 @@ def scan_file(
         }
     except Exception as caught_error:
         if backup_finalized and new_target_published:
+            parent_path_status = _anchored_parent_status(
+                output_path.parent,
+                output_parent_identity,
+            )
+            if parent_path_status != "current":
+                parent_error = (
+                    caught_error
+                    if isinstance(caught_error, ScanError)
+                    else _verification_failed()
+                )
+                parent_error.details["parentPathStatus"] = parent_path_status
+                parent_error.details["retentionScope"] = "original-parent"
+                parent_error.details["officialPathStatus"] = (
+                    _entry_status_at_anchor(
+                        output_path,
+                        output_path.parent,
+                        parent_fd,
+                    )
+                    if parent_fd is not None
+                    else _path_entry_status(output_path)
+                )
+                raise parent_error from caught_error
             if not _directory_matches_identity(
                 output_path, created_directory_identity
             ):
@@ -1029,6 +1405,8 @@ def scan_file(
                 retention = _retain_path_entry_in_quarantine(
                     output_path,
                     created_directory_identity,
+                    parent_fd=parent_fd,
+                    parent_identity=output_parent_identity,
                 )
             except ScanError as cleanup_error:
                 raise cleanup_error from caught_error
@@ -1049,6 +1427,8 @@ def scan_file(
                 retention = _retain_path_entry_in_quarantine(
                     output_path,
                     created_directory_identity,
+                    parent_fd=parent_fd,
+                    parent_identity=output_parent_identity,
                 )
             except ScanError as cleanup_error:
                 if backup_container is not None:
@@ -1060,10 +1440,18 @@ def scan_file(
 
         if old_target_moved and backup_entry is not None:
             try:
-                _rename_no_replace(backup_entry, output_path)
+                _transaction_rename_no_replace(
+                    backup_entry,
+                    output_path,
+                    output_path.parent,
+                    parent_fd,
+                )
                 old_target_moved = False
                 if backup_container is not None:
-                    backup_container.rmdir()
+                    if parent_fd is None:
+                        backup_container.rmdir()
+                    else:
+                        os.rmdir(backup_container.name, dir_fd=parent_fd)
             except OSError:
                 if backup_container is not None:
                     error.details["retainedBackupBasename"] = backup_container.name
@@ -1073,6 +1461,8 @@ def scan_file(
                 retention = _retain_path_entry_in_quarantine(
                     staging_path,
                     created_directory_identity,
+                    parent_fd=parent_fd,
+                    parent_identity=output_parent_identity,
                 )
             except ScanError as cleanup_error:
                 cleanup_error.details["retainedPathBasename"] = staging_path.name
@@ -1089,12 +1479,35 @@ def scan_file(
 
         if backup_container is not None and not old_target_moved:
             try:
-                backup_container.rmdir()
+                if parent_fd is None:
+                    backup_container.rmdir()
+                else:
+                    os.rmdir(backup_container.name, dir_fd=parent_fd)
             except FileNotFoundError:
                 pass
             except OSError:
                 error.details["retainedBackupBasename"] = backup_container.name
-        error.details["officialPathStatus"] = _path_entry_status(output_path)
+        parent_path_status = _anchored_parent_status(
+            output_path.parent,
+            output_parent_identity,
+        )
+        if parent_fd is not None:
+            error.details["officialPathStatus"] = _entry_status_at_anchor(
+                output_path,
+                output_path.parent,
+                parent_fd,
+            )
+        else:
+            error.details["officialPathStatus"] = _path_entry_status(output_path)
+        if parent_path_status != "current":
+            error.details["parentPathStatus"] = parent_path_status
+            error.details.setdefault(
+                "retentionScope",
+                "original-parent" if parent_fd is not None else "path-based-parent",
+            )
         if error is caught_error:
             raise
         raise error from caught_error
+    finally:
+        if parent_fd is not None:
+            os.close(parent_fd)
