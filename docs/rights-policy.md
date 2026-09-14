@@ -19,20 +19,15 @@ The initial profile is `zi5-public-corpus-v1`:
 - no advertising, paywall, or sponsored placement;
 - English-language original text only;
 - excerpts rather than complete ebooks;
+- separate United States and China-mainland work and edition assessments;
 - per-record source, attribution, evidence, and jurisdiction fields; and
 - no representation that a United States copyright assessment establishes
   worldwide status.
 
-The profile must record the jurisdictions actually reviewed before it can be
-used by a release. Adding a destination, commercial use, translation, full-text
-redistribution, or a new jurisdiction creates a new profile version or requires
-a fresh decision.
-
-The current draft has no approved operating-jurisdiction rule. Project
-Gutenberg's United States assessment alone is therefore insufficient to approve
-source acquisition by a non-U.S. operator or a globally reachable release.
-Resolving that rule is a prerequisite for the acquisition gate, not an issue to
-defer until after excerpts have been collected.
+The required jurisdictions for version 1 are `US` and `CN-mainland`. A record
+must pass both; one assessment cannot be derived from the other. Adding a
+destination, commercial use, translation, full-text redistribution, or another
+jurisdiction creates a new profile version or requires a fresh decision.
 
 ## Separate assessment layers
 
@@ -50,11 +45,11 @@ A positive answer at one layer cannot substitute for evidence at another.
 
 ## Controlled vocabularies
 
-### Work status
+### Work status per jurisdiction
 
-- `public-domain-us`: evidence supports unrestricted copyright status for the
-  underlying work in the United States.
-- `copyrighted`: evidence identifies an applicable copyright restriction.
+- `not-restricted`: the recorded evidence supports absence or expiry of the
+  relevant economic-right restriction for the named jurisdiction and profile.
+- `restricted`: evidence identifies an applicable copyright restriction.
 - `uncertain`: available evidence is incomplete or conflicting.
 
 ### Edition status
@@ -76,6 +71,32 @@ A positive answer at one layer cannot substitute for evidence at another.
 
 Missing evidence is never interpreted as `eligible`.
 
+## United States gate
+
+Project Gutenberg catalog or RDF status is an initial signal, not the final
+decision. The selected ebook's internal notice must also show that the item is
+not restricted under United States copyright law, and the edition must be
+reviewed for protected translations or additions. A file posted under a
+copyright holder's permission is blocked unless its downstream license is
+separately approved.
+
+## China-mainland gate
+
+For a known natural-person author, the general economic-right term is screened
+as life plus 50 years, ending on December 31 of the fiftieth year after death.
+For a 2026 publication, death in 1975 or earlier may pass this term screen;
+death in 1976 remains within the term through December 31, 2026.
+
+This screen is not the final assessment. Review must also cover joint authors,
+foreign-work and treaty connections, origin country and first publication,
+anonymous or organizational authorship, translations, annotations, modern
+editorial matter, and treaty-transition questions. Authorship, alteration, and
+integrity rights remain protected without a time limit, so releases preserve
+the author and title, reproduce the approved original text faithfully, and do
+not present project normalization as the author's wording.
+
+See the official-source [China-mainland research](research/china-public-domain-policy.md).
+
 ## Evidence requirements
 
 Each decision must cite immutable or captured evidence sufficient to audit:
@@ -96,9 +117,10 @@ when its content may change.
 ## Project Gutenberg handling
 
 The pilot must follow the approved acquisition method documented in
-[the source-policy research](research/gutenberg-source-policy.md). Catalog
-metadata is not enough: the selected ebook's internal notice must also be
-checked.
+[the source-policy research](research/gutenberg-source-policy.md) and
+[private-mirror research](research/gutenberg-private-mirror.md). Catalog
+metadata is not enough: the selected ebook's internal notice and both required
+jurisdiction assessments must also be checked.
 
 Project Gutenberg boilerplate must be removed from the analysis body without
 altering literary text, while the untouched local source snapshot remains

@@ -23,7 +23,10 @@ Required semantics:
 - canonical title and author names;
 - original language;
 - original publication year when supported by evidence;
-- author birth and death years when used in a rights decision; and
+- author birth and death years with evidence when used in a China-mainland
+  rights decision;
+- author nationality or habitual residence and first-publication country/date
+  when used to establish foreign-work or treaty status; and
 - references supporting bibliographic or rights facts.
 
 `workId` is an opaque identifier assigned once. It must not be regenerated from
@@ -54,6 +57,10 @@ The exact acquisition URL is internal provenance because hosted file paths may
 change and Project Gutenberg asks public citations to use the ebook landing
 page. A public release includes the canonical landing page and source hashes,
 but not the acquisition URL unless a later policy review approves it.
+
+The source record also identifies the dated RDF snapshot and exact RDF resource
+from which its `text/plain; charset=utf-8` path was selected. Filename suffixes
+are evidence neither of encoding nor of preferred-edition status.
 
 ### Candidate match
 
@@ -134,6 +141,21 @@ decision, and release version.
 
 Rights vocabularies are defined in [rights-policy.md](rights-policy.md).
 
+### Jurisdiction assessment
+
+Each rights object contains one assessment for `US` and one for `CN-mainland`.
+Each assessment records:
+
+- jurisdiction;
+- `workStatus`: `not-restricted`, `restricted`, or `uncertain`;
+- `editionStatus`: `eligible`, `contains-protected-material`, or `uncertain`;
+- basis reason codes;
+- evidence references; and
+- reviewer and decision date.
+
+The overall decision cannot be `eligible` unless both required jurisdiction
+assessments are present and pass.
+
 ## Invariants
 
 A release record must satisfy all of these conditions:
@@ -146,7 +168,8 @@ A release record must satisfy all of these conditions:
 5. source and analysis SHA-256 values are present;
 6. offsets select the recorded text from the fixed analysis snapshot;
 7. the effective human review is `accepted`;
-8. the applicable rights decision is `eligible` for the release's target-use
+8. the United States and China-mainland work and edition assessments pass, and
+   the aggregate rights decision is `eligible` for the release's target-use
    profile; and
 9. no unresolved warning or superseding rejection exists.
 

@@ -27,7 +27,8 @@ users outside the United States to check the law where they are located.
 Before any corpus artifact is published, the project must:
 
 - define a versioned target-use profile;
-- document the jurisdictions actually checked;
+- complete separate United States and China-mainland assessments for the
+  initial target-use profile;
 - fix the exact source file and its content hash;
 - preserve evidence for the work and edition decision;
 - complete human review of the excerpt and time interpretation;

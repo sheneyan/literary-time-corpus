@@ -72,8 +72,9 @@ negative classes.
 
 ## Minute coverage
 
-Coverage uses only accepted, rights-eligible, `exact-minute-resolved` candidates
-with one normalized value:
+Coverage uses only accepted candidates whose United States and China-mainland
+rights assessments both pass, whose precision is `exact-minute-resolved`, and
+which have one normalized value:
 
 ```text
 exact minutes covered = count(distinct normalized HH:MM values)

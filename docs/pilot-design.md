@@ -40,6 +40,31 @@ Anthologies containing multiple authors or uncertain edition boundaries are
 excluded from the first pilot. Eligibility for analysis does not by itself make
 a record eligible for public release.
 
+For the initial profile, source selection must pass both a United States screen
+and a China-mainland screen. For a known natural-person author in a 2026 pilot,
+death in 1975 or earlier is a China-mainland term-screening condition, not a
+complete clearance rule. Cooperation, foreign-work treaty status, source
+country, editions, additions, and perpetual authorship, alteration, and
+integrity rights remain review fields.
+
+## Acquisition model
+
+Maintain a local copy of the official RDF metadata for discovery. For each
+approved ebook ID, freeze exactly one current RDF path whose media type is
+`text/plain; charset=utf-8`, then acquire only those 72 allowlisted paths through
+an official mirror or documented robot facility.
+
+Do not use a global `*.txt` rsync include as the pilot selector. The dated
+official main-collection file list contained 157,544 `.txt` paths totaling about
+63.081 GB, including historical copies, alternate encodings, and non-book text.
+The allowlist's exact RDF-selected paths, not that suffix total, define pilot
+storage and network volume. See the [private-mirror research](research/gutenberg-private-mirror.md).
+
+The planned cache host is UBTmini, using a private directory that exposes no
+public HTTP, FTP, or rsync service. Deployment is governed by the separate
+[UBTmini source-cache plan](operations/ubtmini-source-cache-plan.md). No host
+change is authorized by this document.
+
 ## Sample design
 
 The pilot uses 72 source snapshots split before extraction:
@@ -120,8 +145,8 @@ A later implementation must demonstrate, using synthetic fixtures only:
 - reproducible reports.
 
 Passing Gate 2 is a technical prerequisite for acquisition. Actual acquisition
-also requires approval of the applicable operating-jurisdiction policy and may
-include only the approved 72-work allowlist.
+also requires completed United States and China-mainland source screens, the
+approved UBTmini cache deployment, and the frozen 72-work allowlist.
 
 ### Gate 3: pilot execution
 

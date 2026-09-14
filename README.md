@@ -26,7 +26,9 @@ expressions can be extracted, and how much human review is required.
 The initial pilot will use a bounded allowlist of English-language works from
 Project Gutenberg. It will use documented catalog and bulk-access facilities,
 retain source identifiers and hashes, and keep acquisition, analysis, review,
-and release artifacts separate.
+and release artifacts separate. Discovery uses a local RDF metadata copy;
+acquisition caches only the exact approved UTF-8 text paths rather than mirroring
+every ebook format or every file ending in `.txt`.
 
 The project will not ingest Project Gutenberg at scale, publish unreviewed
 excerpts, fill missing minutes with approximate text, or implement the
@@ -39,10 +41,13 @@ semantics, evaluation requirements, and publication gates.
 
 - [Project brief](docs/project-brief.md)
 - [Project Gutenberg source-policy research](docs/research/gutenberg-source-policy.md)
+- [Project Gutenberg private-mirror research](docs/research/gutenberg-private-mirror.md)
+- [China mainland copyright research](docs/research/china-public-domain-policy.md)
 - [Bounded pilot design](docs/pilot-design.md)
 - [Pilot data model](docs/data-model.md)
 - [Rights and publication policy](docs/rights-policy.md)
 - [Evaluation protocol](docs/evaluation-protocol.md)
+- [UBTmini source-cache plan](docs/operations/ubtmini-source-cache-plan.md)
 
 ## Licensing and rights
 

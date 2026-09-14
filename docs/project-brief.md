@@ -46,6 +46,13 @@ Use its catalog and documented robot or harvest facilities rather than scraping
 interactive pages. Preserve the source ebook identifier, exact downloaded-file
 URL, acquisition date, and source hash.
 
+For the pilot, keep a dated local copy of the official RDF metadata and derive a
+reviewed allowlist from it. Cache only the exact approved file whose RDF media
+type is `text/plain; charset=utf-8` for each selected ebook. Do not mirror every
+format or use a global `*.txt` suffix rule as the semantic selector: the main
+collection also contains historical versions, alternate encodings, indexes,
+instructions, and supplemental text.
+
 Project Gutenberg determines copyright status primarily under United States
 law and does not guarantee reuse rights elsewhere. The project must therefore
 record rights evidence per work and edition. A public-domain original does not
@@ -66,13 +73,15 @@ generic claim of worldwide clearance. The first proposed profile,
 `zi5-public-corpus-v1`, covers a publicly downloadable corpus and display of
 approved excerpts on `labs.zi5.io`, without advertising or a paywall.
 
-The profile does not claim worldwide public-domain status. Each rights record
-must name the jurisdictions actually checked, and distribution decisions for
-other jurisdictions require their own review.
+The profile requires separate United States and China-mainland assessments for
+the underlying work and selected edition. A record is eligible only when both
+assessments pass. The profile does not claim worldwide public-domain status;
+distribution decisions for other jurisdictions require their own review.
 
 Rights vocabulary must keep evidence facts separate from project decisions:
 
-- `workStatus`: `public-domain-us`, `copyrighted`, or `uncertain`;
+- each jurisdiction assessment records `workStatus` as `not-restricted`,
+  `restricted`, or `uncertain`;
 - `editionStatus`: `eligible`, `contains-protected-material`, or `uncertain`;
 - `decision`: `eligible`, `analysis-only`, `review-required`, or `blocked`.
 
@@ -148,11 +157,22 @@ The physical storage format may change, but it must preserve these semantics:
     "evidenceText": "in the morning"
   },
   "rights": {
-    "workStatus": "public-domain-us",
-    "editionStatus": "eligible",
     "targetUseProfile": "zi5-public-corpus-v1",
     "decision": "eligible",
-    "jurisdictionsChecked": ["US"],
+    "jurisdictionAssessments": [
+      {
+        "jurisdiction": "US",
+        "workStatus": "not-restricted",
+        "editionStatus": "eligible",
+        "basis": ["gutenberg-us-status", "ebook-internal-notice"]
+      },
+      {
+        "jurisdiction": "CN-mainland",
+        "workStatus": "not-restricted",
+        "editionStatus": "eligible",
+        "basis": ["author-term-expired", "foreign-work-review"]
+      }
+    ],
     "evidence": [
       {
         "type": "gutenberg-metadata",
@@ -189,7 +209,8 @@ pilot must answer:
 - How many distinct minutes are covered by the selected sample?
 - Which minutes and hours remain sparse?
 - What are median and P90 human-review times per candidate and accepted entry?
-- Which jurisdiction and edition checks are required for intended publication?
+- What evidence and review effort are required for the United States and
+  China-mainland publication gates?
 - Are the results strong enough to justify a larger corpus run?
 
 ### Evaluation design
@@ -241,6 +262,8 @@ until that pilot design is reviewed and approved.
 - [Project Gutenberg license guidance](https://www.gutenberg.org/policy/license.html)
 - [Project Gutenberg permission guidance](https://www.gutenberg.org/policy/permission.html)
 - [Project Gutenberg robot-access guidance](https://dev.gutenberg.org/policy/robot_access.html)
+- [Private-mirror research](research/gutenberg-private-mirror.md)
+- [China-mainland copyright research](research/china-public-domain-policy.md)
 - [cdmoro/literature-clock permission request](https://github.com/cdmoro/literature-clock/issues/53)
 - [cdmoro/literature-clock licensing clarification](https://github.com/cdmoro/literature-clock/pull/57)
 - [JohsEnevoldsen/literature-clock](https://github.com/JohsEnevoldsen/literature-clock)
