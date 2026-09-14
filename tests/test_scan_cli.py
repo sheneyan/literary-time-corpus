@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import getpass
 import hashlib
 import json
+import re
+import socket
 from pathlib import Path
 
 import pytest
@@ -156,6 +159,104 @@ def test_scan_no_time_input_succeeds_with_empty_candidates(
     report = json.loads((destination / "report.json").read_text())
     assert report["candidateCount"] == report["resolvedMinuteCount"] == 0
     assert json.loads(result.stdout)["candidateCount"] == 0
+
+
+def test_scan_review_groups_candidates_and_renders_complete_safe_details(
+    run_ltc, tmp_path: Path
+) -> None:
+    source = tmp_path / "private-input.txt"
+    destination = tmp_path / "scan"
+    source_url = "https://example.org/books/public.txt"
+    source.write_text(
+        "序章 café 😀 ```notes``` at 13:15; then 7:05; "
+        "finally about three o'clock.\n",
+        encoding="utf-8",
+    )
+
+    result = run_ltc(
+        "scan",
+        source,
+        "--output",
+        destination,
+        "--title",
+        "A #Title [draft] *one* `tick`",
+        "--author",
+        "A_B | Co.",
+        "--source-url",
+        source_url,
+    )
+
+    assert result.returncode == 0, result.stderr
+    candidates = read_rows(destination)
+    review_bytes = (destination / "review.md").read_bytes()
+    review = review_bytes.decode("utf-8")
+    expected_ids = [
+        candidate["candidateId"]
+        for precision in (
+            "exact-minute-resolved",
+            "exact-minute-ambiguous",
+            "approximate",
+        )
+        for candidate in candidates
+        if candidate["precision"] == precision
+    ]
+
+    assert review.startswith("# Literary time candidate review\n")
+    assert "Title: A \\#Title \\[draft\\] \\*one\\* \\`tick\\`" in review
+    assert "Author: A\\_B \\| Co\\." in review
+    assert "Metadata complete: yes" in review
+    assert "Candidate count: 3" in review
+    assert "This file is a review view, not a review record." in review
+    assert "Candidates are not approved for publication." in review
+    assert "The user is responsible for permission to process the input text." in review
+    assert review.index("## Exact-minute resolved") < review.index(
+        "## Exact-minute ambiguous"
+    )
+    assert review.index("## Exact-minute ambiguous") < review.index(
+        "## Approximate or excluded"
+    )
+    assert expected_ids == re.findall(r"Candidate ID: `([0-9a-f]{64})`", review)
+    for candidate in candidates:
+        assert review.count(f"Candidate ID: `{candidate['candidateId']}`") == 1
+        assert candidate["context"] in review
+        assert candidate["matchedText"] in review
+        assert all(value in review for value in candidate["normalizedTimes"])
+        assert candidate["ruleId"].replace("-", "\\-") in review
+        assert all(
+            value.replace("-", "\\-") in review
+            for value in candidate["warningReasonCodes"]
+        )
+        assert all(
+            value.replace("-", "\\-") in review
+            for value in candidate["exclusionReasonCodes"]
+        )
+    assert "````text\n" in review
+    assert "- [ ]" not in review
+    assert "- [x]" not in review.lower()
+    assert str(source) not in review
+    assert str(destination) not in review
+    assert getpass.getuser() not in review
+    assert socket.gethostname() not in review
+    assert source_url not in review
+    assert review_bytes.endswith(b"\n")
+    assert not review_bytes.endswith(b"\n\n")
+    assert b"\r" not in review_bytes
+
+
+def test_scan_review_renders_all_empty_sections(run_ltc, tmp_path: Path) -> None:
+    source = tmp_path / "quiet.txt"
+    destination = tmp_path / "scan"
+    source.write_text("The synthetic room stayed quiet.\n", encoding="utf-8")
+
+    result = run_ltc("scan", source, "--output", destination)
+
+    assert result.returncode == 0, result.stderr
+    review = (destination / "review.md").read_text(encoding="utf-8")
+    assert "Candidate count: 0" in review
+    assert review.count("## Exact-minute resolved") == 1
+    assert review.count("## Exact-minute ambiguous") == 1
+    assert review.count("## Approximate or excluded") == 1
+    assert "Candidate ID:" not in review
 
 
 def test_scan_preserves_multibyte_utf8_offsets(run_ltc, tmp_path: Path) -> None:

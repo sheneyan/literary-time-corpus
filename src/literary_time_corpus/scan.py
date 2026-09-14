@@ -8,7 +8,6 @@ import stat
 import tempfile
 import unicodedata
 from pathlib import Path
-from typing import Any
 from urllib.parse import urlsplit
 
 from literary_time_corpus.candidate import (
@@ -21,6 +20,7 @@ from literary_time_corpus.io import write_json_atomic, write_jsonl_atomic
 from literary_time_corpus.normalize import NormalizationError, normalize_bytes
 from literary_time_corpus.normalized import normalized_record_violations
 from literary_time_corpus.report import ReportError, build_report
+from literary_time_corpus.review import render_review_markdown
 
 
 SCAN_SCHEMA_VERSION = "scan-run-v1"
@@ -155,31 +155,6 @@ def _read_regular_file(input_path: Path) -> bytes:
         os.close(descriptor)
 
 
-def _review_markdown(
-    metadata: dict[str, object], candidates: list[dict[str, Any]]
-) -> str:
-    lines = [
-        f"# {metadata['title']}",
-        "",
-        f"Author: {metadata['author']}",
-        f"Metadata complete: {'yes' if metadata['metadataComplete'] else 'no'}",
-        "",
-        "This is an analysis artifact, not publication or public-domain approval.",
-        "",
-        f"## Candidates ({len(candidates)})",
-        "",
-    ]
-    for candidate in candidates:
-        rendered_times = ", ".join(candidate["normalizedTimes"]) or "unresolved"
-        lines.extend(
-            (
-                f"- `{candidate['candidateId']}` — {candidate['matchedText']} ({rendered_times})",
-                "",
-            )
-        )
-    return "\n".join(lines)
-
-
 def scan_to_staging(
     input_path: Path,
     staging_path: Path,
@@ -225,8 +200,8 @@ def scan_to_staging(
     except ReportError as error:
         raise ScanError(error.code, str(error), stage="reporting") from error
     write_json_atomic(report_path, report)
-    (staging_path / "review.md").write_text(
-        _review_markdown(work_metadata, candidates), encoding="utf-8", newline="\n"
+    (staging_path / "review.md").write_bytes(
+        render_review_markdown(candidates, work_metadata)
     )
     run = {
         "bodyBoundary": {
