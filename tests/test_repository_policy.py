@@ -71,7 +71,10 @@ PRIVATE_KEY_MARKER = re.compile(
     rb"-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----"
 )
 TOKEN_ASSIGNMENT = re.compile(
-    rb"\b(?:api[_-]?key|access[_-]?token|secret[_-]?key)\b"
+    rb"(?<![A-Za-z0-9_-])"
+    rb"(?:[A-Za-z][A-Za-z0-9]*[_-])*"
+    rb"(?:api[_-]?key|token|secret(?:[_-][A-Za-z0-9]+)*)"
+    rb"(?![A-Za-z0-9_-])"
     rb"['\"]?\s*[:=]\s*(?:['\"][A-Za-z0-9_./+=-]{16,}['\"]|"
     rb"[A-Za-z0-9_./+=-]{16,}(?=$|[\s;#]))",
     re.IGNORECASE,
@@ -304,7 +307,9 @@ def test_familiar_suffixes_do_not_bypass_exact_reviewed_path_allowlists() -> Non
 
 def test_allowed_text_paths_reject_likely_secrets_and_gutenberg_bodies() -> None:
     private_key_marker = b"-----BEGIN " + b"PRIVATE KEY-----\n"
-    token_assignment = b"access_" + b"token = '0123456789abcdef0123456789abcdef'\n"
+    token_assignment = (
+        b"access_to" + b"ken = '" + b"0123456789abcdef0123456789abcdef'\n"
+    )
     gutenberg_body_marker = (
         b"*** START OF THE PROJECT " + b"GUTENBERG EBOOK UNREVIEWED ***\n"
     )
@@ -345,6 +350,40 @@ def test_secret_filter_allows_short_placeholders_and_descriptive_prose() -> None
     files = {
         "README.md": b'api_' + b'key = "replace-me"\n',
         "docs/data-model.md": b"Document the access_" + b"token field.\n",
+    }
+
+    assert policy_violations(files) == []
+
+
+def test_secret_filter_rejects_common_prefixed_credential_names() -> None:
+    files = {
+        "README.md": (
+            b"OPENAI_API_" + b"KEY=sk-proj-abcdefghijklmnopqrstuvwxyz\n"
+        ),
+        "docs/data-model.md": (
+            b"GITHUB_" + b"TOKEN=ghp_abcdefghijklmnopqrstuvwxyz1234\n"
+        ),
+        "src/literary_time_corpus/cli.py": (
+            b'client_se' + b'cret="' + b'0123456789abcdef"\n'
+        ),
+        "tests/conftest.py": (
+            b"AWS_SECRET_" + b"ACCESS_KEY=abcdefghijklmnopqrstuvwxyz123456\n"
+        ),
+    }
+
+    assert policy_violations(files) == sorted(files)
+
+
+def test_secret_filter_allows_redaction_env_lookups_and_ordinary_prose() -> None:
+    files = {
+        "README.md": b"OPENAI_API_" + b"KEY=redacted\n",
+        "docs/data-model.md": (
+            b"GITHUB_" + b'TOKEN = os.environ["GITHUB_TOKEN"]\n'
+        ),
+        "src/literary_time_corpus/cli.py": (
+            b'client_' + b'secret = "<redacted>"\n'
+        ),
+        "tests/conftest.py": b"Describe a token assignment without a value.\n",
     }
 
     assert policy_violations(files) == []
