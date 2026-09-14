@@ -1,10 +1,7 @@
 from __future__ import annotations
 
 import json
-import os
-import subprocess
 import threading
-import time
 from pathlib import Path
 
 import pytest
@@ -164,7 +161,7 @@ def test_invalid_output_parent_is_rejected_without_mutation(
     assert source.read_bytes() == b"At 13:15."
 
 
-def test_force_detects_final_component_replacement_before_switch(
+def test_force_event_coordinated_final_component_replacement_before_switch(
     tmp_path: Path, monkeypatch, capsys
 ) -> None:
     source = tmp_path / "book.txt"
@@ -178,22 +175,35 @@ def test_force_detects_final_component_replacement_before_switch(
     (target / "keep").write_bytes(b"target")
     verify = scan_module._verify_staging
     calls = 0
+    verification_ready = threading.Event()
+    resume_publication = threading.Event()
 
-    def replace_after_verification(*args, **kwargs):
+    def pause_after_verification(*args, **kwargs):
         nonlocal calls
         result = verify(*args, **kwargs)
         calls += 1
         if calls == 1:
-            output.rename(moved_old)
-            output.symlink_to(target, target_is_directory=True)
+            verification_ready.set()
+            assert resume_publication.wait(timeout=5)
         return result
 
-    monkeypatch.setattr(scan_module, "_verify_staging", replace_after_verification)
-
-    exit_code = main(["scan", str(source), "--output", str(output), "--force"])
+    monkeypatch.setattr(scan_module, "_verify_staging", pause_after_verification)
+    outcome: list[int] = []
+    worker = threading.Thread(
+        target=lambda: outcome.append(
+            main(["scan", str(source), "--output", str(output), "--force"])
+        )
+    )
+    worker.start()
+    assert verification_ready.wait(timeout=5)
+    output.rename(moved_old)
+    output.symlink_to(target, target_is_directory=True)
+    resume_publication.set()
+    worker.join(timeout=5)
+    assert not worker.is_alive()
     captured = capsys.readouterr()
 
-    assert exit_code == 2
+    assert outcome == [2]
     assert json.loads(captured.err)["error"]["details"]["stage"] == "publication"
     assert output.is_symlink()
     assert (target / "keep").read_bytes() == b"target"
@@ -243,65 +253,179 @@ def test_force_detects_output_parent_replacement_before_generation(
             moved_parent.rename(parent)
 
 
-def test_force_black_box_fifo_coordinated_path_replacement_is_bounded(
-    tmp_path: Path, project_root: Path
+# FIFO inputs are intentionally rejected as non-regular source files. The
+# in-process Event barrier above coordinates the exact pre-publication window;
+# run_ltc force-success tests still exercise the real subprocess CLI boundary.
+
+
+def test_force_rechecks_published_output_after_backup_cleanup(
+    tmp_path: Path, monkeypatch, capsys
 ) -> None:
     source = tmp_path / "book.txt"
     output = tmp_path / "scan"
-    moved_old = tmp_path / "moved-old"
-    target = tmp_path / "target"
-    signal_fifo = tmp_path / "staging-ready"
-    source.write_text("ordinary text\n" * 1_000_000, encoding="utf-8")
+    moved_new = tmp_path / "moved-new"
+    source.write_text("At 13:15.", encoding="utf-8")
     output.mkdir()
     (output / "keep").write_bytes(b"old")
-    target.mkdir()
-    (target / "keep").write_bytes(b"target")
-    os.mkfifo(signal_fifo)
+    remove_backup = scan_module._remove_owned_backup
 
-    def announce_staging() -> None:
-        deadline = time.monotonic() + 10
-        while time.monotonic() < deadline:
-            if any(tmp_path.glob(".scan.scan-*")):
-                with signal_fifo.open("wb", buffering=0) as fifo:
-                    fifo.write(b"1")
-                return
-            time.sleep(0.001)
+    def replace_official_during_cleanup(*args, **kwargs):
+        result = remove_backup(*args, **kwargs)
+        output.rename(moved_new)
+        output.mkdir()
+        (output / "competing").write_bytes(b"do not overwrite")
+        return result
 
-    watcher = threading.Thread(target=announce_staging, daemon=True)
-    watcher.start()
-    process = subprocess.Popen(
-        ["uv", "run", "ltc", "scan", str(source), "--output", str(output), "--force"],
-        cwd=project_root,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
+    monkeypatch.setattr(
+        scan_module, "_remove_owned_backup", replace_official_during_cleanup
     )
-    fifo_fd = os.open(signal_fifo, os.O_RDONLY | os.O_NONBLOCK)
-    try:
-        deadline = time.monotonic() + 10
-        signal = b""
-        while time.monotonic() < deadline and not signal:
-            try:
-                signal = os.read(fifo_fd, 1)
-            except BlockingIOError:
-                signal = b""
-            if process.poll() is not None:
-                break
-            time.sleep(0.001)
-    finally:
-        os.close(fifo_fd)
-    assert signal == b"1"
-    output.rename(moved_old)
-    output.symlink_to(target, target_is_directory=True)
-    stdout, stderr = process.communicate(timeout=15)
-    watcher.join(timeout=1)
 
-    assert process.returncode == 2
-    assert stdout == ""
-    assert json.loads(stderr)["error"]["details"]["stage"] == "publication"
-    assert output.is_symlink()
-    assert (target / "keep").read_bytes() == b"target"
-    assert (moved_old / "keep").read_bytes() == b"old"
+    exit_code = main(["scan", str(source), "--output", str(output), "--force"])
+    captured = capsys.readouterr()
+
+    assert exit_code == 2
+    assert captured.out == ""
+    error = json.loads(captured.err)["error"]
+    assert error["code"] == "scan-verification-failed"
+    assert error["details"]["stage"] == "verification"
+    assert (output / "competing").read_bytes() == b"do not overwrite"
+    assert {entry.name for entry in moved_new.iterdir()} == ARTIFACTS
+
+
+def test_force_quarantines_owned_output_corrupted_after_backup_cleanup(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    source = tmp_path / "book.txt"
+    output = tmp_path / "scan"
+    source.write_text("At 13:15.", encoding="utf-8")
+    output.mkdir()
+    (output / "keep").write_bytes(b"old")
+    remove_backup = scan_module._remove_owned_backup
+
+    def corrupt_official_during_cleanup(*args, **kwargs):
+        result = remove_backup(*args, **kwargs)
+        (output / "review.md").write_bytes(b"corrupt")
+        return result
+
+    monkeypatch.setattr(
+        scan_module, "_remove_owned_backup", corrupt_official_during_cleanup
+    )
+
+    exit_code = main(["scan", str(source), "--output", str(output), "--force"])
+    captured = capsys.readouterr()
+
+    assert exit_code == 2
+    assert captured.out == ""
+    error = json.loads(captured.err)["error"]
+    assert error["code"] == "scan-verification-failed"
+    retained = tmp_path / error["details"]["retainedPathBasename"]
+    assert error["details"]["officialPathStatus"] == "absent"
+    assert (retained / "entry" / "review.md").read_bytes() == b"corrupt"
+    assert not output.exists()
+
+
+def test_force_retains_owned_output_on_unexpected_final_verifier_failure(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    source = tmp_path / "book.txt"
+    output = tmp_path / "scan"
+    source.write_text("At 13:15.", encoding="utf-8")
+    output.mkdir()
+    (output / "keep").write_bytes(b"old")
+    verify = scan_module._verify_staging
+    calls = 0
+
+    def fail_third_verification(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 3:
+            raise RuntimeError("private final verifier failure")
+        return verify(*args, **kwargs)
+
+    monkeypatch.setattr(scan_module, "_verify_staging", fail_third_verification)
+
+    exit_code = main(["scan", str(source), "--output", str(output), "--force"])
+    captured = capsys.readouterr()
+
+    assert exit_code == 1
+    assert captured.out == ""
+    error = json.loads(captured.err)["error"]
+    assert error["code"] == "internal-generation-failed"
+    assert error["details"]["stage"] == "staging"
+    retained = tmp_path / error["details"]["retainedPathBasename"]
+    assert (retained / "entry").is_dir()
+    assert not output.exists()
+    assert "private final verifier failure" not in captured.err
+
+
+def test_force_reports_backup_container_when_private_setup_fails(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    source = tmp_path / "book.txt"
+    output = tmp_path / "scan"
+    source.write_text("At 13:15.", encoding="utf-8")
+    output.mkdir()
+    (output / "keep").write_bytes(b"old")
+    chmod = Path.chmod
+
+    def fail_backup_chmod(path: Path, *args, **kwargs):
+        if ".backup-" in path.name:
+            raise PermissionError("synthetic backup chmod failure")
+        return chmod(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "chmod", fail_backup_chmod)
+
+    exit_code = main(["scan", str(source), "--output", str(output), "--force"])
+    captured = capsys.readouterr()
+
+    assert exit_code == 2
+    assert captured.out == ""
+    error = json.loads(captured.err)["error"]
+    retained_name = error["details"]["retainedBackupBasename"]
+    assert Path(retained_name).name == retained_name
+    assert (tmp_path / retained_name).is_dir()
+    assert tree_bytes(output) == {"keep": b"old"}
+
+
+def test_force_keeps_backup_disclosure_when_staging_retention_also_fails(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    source = tmp_path / "book.txt"
+    output = tmp_path / "scan"
+    source.write_text("At 13:15.", encoding="utf-8")
+    output.mkdir()
+    (output / "keep").write_bytes(b"old")
+    chmod = Path.chmod
+    mkdtemp = scan_module.tempfile.mkdtemp
+    calls = 0
+
+    def fail_backup_chmod(path: Path, *args, **kwargs):
+        if ".backup-" in path.name:
+            raise PermissionError("synthetic backup chmod failure")
+        return chmod(path, *args, **kwargs)
+
+    def fail_quarantine_creation(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 3:
+            raise PermissionError("synthetic quarantine failure")
+        return mkdtemp(*args, **kwargs)
+
+    monkeypatch.setattr(Path, "chmod", fail_backup_chmod)
+    monkeypatch.setattr(scan_module.tempfile, "mkdtemp", fail_quarantine_creation)
+
+    exit_code = main(["scan", str(source), "--output", str(output), "--force"])
+    captured = capsys.readouterr()
+
+    assert exit_code == 2
+    assert captured.out == ""
+    error = json.loads(captured.err)["error"]
+    assert error["code"] == "scan-cleanup-failed"
+    retained_name = error["details"]["retainedBackupBasename"]
+    retained_staging_name = error["details"]["retainedPathBasename"]
+    assert (tmp_path / retained_name).is_dir()
+    assert (tmp_path / retained_staging_name).is_dir()
+    assert tree_bytes(output) == {"keep": b"old"}
 
 
 def test_force_rolls_back_when_staging_publication_fails(

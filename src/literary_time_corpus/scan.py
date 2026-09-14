@@ -450,14 +450,23 @@ def _make_private_container(path: Path, purpose: str) -> Path:
                 dir=path.parent,
             )
         )
-        container.chmod(0o700)
-        return container
     except OSError as error:
         raise ScanError(
             "invalid-output-path",
             "could not create private transaction directory",
             stage="publication",
         ) from error
+    try:
+        container.chmod(0o700)
+    except OSError as error:
+        setup_error = ScanError(
+            "invalid-output-path",
+            "could not secure private transaction directory",
+            stage="publication",
+        )
+        setup_error.details["retainedBackupBasename"] = container.name
+        raise setup_error from error
+    return container
 
 
 def _rename_no_replace(source: Path, destination: Path) -> None:
@@ -884,6 +893,7 @@ def scan_file(
     backup_entry: Path | None = None
     old_target_moved = False
     new_target_published = False
+    backup_finalized = False
     try:
         created_directory_identity = _directory_identity(staging_path)
         if not _directory_matches_identity(
@@ -981,6 +991,19 @@ def scan_file(
                     backup_container.name
                 )
                 raise cleanup_error from None
+            backup_finalized = True
+            if _directory_identity(output_path) != created_directory_identity:
+                raise _verification_failed()
+            # _verify_staging begins with the exact five-entry inventory check.
+            _verify_staging(
+                output_path,
+                run,
+                source=source,
+                work_metadata=metadata,
+                start_marker=start_marker,
+                end_marker=end_marker,
+                expected_identities=artifact_identities,
+            )
         return {
             "candidateCount": counts["candidateCount"],
             "outputName": output_path.name,
@@ -988,6 +1011,23 @@ def scan_file(
             "status": "complete",
         }
     except Exception as caught_error:
+        if backup_finalized and new_target_published:
+            if not _directory_matches_identity(
+                output_path, created_directory_identity
+            ):
+                raise _verification_failed() from caught_error
+            error = _staging_failure(caught_error)
+            try:
+                retention = _retain_path_entry_in_quarantine(
+                    output_path,
+                    created_directory_identity,
+                )
+            except ScanError as cleanup_error:
+                raise cleanup_error from caught_error
+            _attach_retention(error, retention)
+            if error is caught_error:
+                raise
+            raise error from caught_error
         if (
             isinstance(caught_error, ScanError)
             and caught_error.code == "scan-cleanup-failed"
@@ -1027,9 +1067,14 @@ def scan_file(
                     created_directory_identity,
                 )
             except ScanError as cleanup_error:
+                cleanup_error.details["retainedPathBasename"] = staging_path.name
                 if backup_container is not None and old_target_moved:
                     cleanup_error.details["retainedBackupBasename"] = (
                         backup_container.name
+                    )
+                elif "retainedBackupBasename" in error.details:
+                    cleanup_error.details["retainedBackupBasename"] = (
+                        error.details["retainedBackupBasename"]
                     )
                 raise
             _attach_retention(error, retention)
