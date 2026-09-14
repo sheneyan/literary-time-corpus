@@ -222,6 +222,7 @@ def test_extract_emits_exact_utf8_offsets_ids_context_and_segmentation(
         key=lambda row: (row["matchStartByte"], row["matchEndByte"], row["candidateId"]),
     )
     for candidate in rows:
+        assert "workMetadata" not in candidate
         start = candidate["matchStartByte"]
         end = candidate["matchEndByte"]
         assert analysis_bytes[start:end].decode("utf-8") == candidate["matchedText"]

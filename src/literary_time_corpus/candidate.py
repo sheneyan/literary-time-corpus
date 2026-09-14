@@ -10,6 +10,7 @@ from literary_time_corpus.normalized import NORMALIZATION_VERSION
 
 CANDIDATE_SCHEMA_VERSION = "time-candidate-v1"
 EXTRACTION_VERSION = "extract-v1"
+WORK_METADATA_SCHEMA_VERSION = "scan-work-metadata-v1"
 TIME_PATTERN = re.compile(r"(?:[01][0-9]|2[0-3]):[0-5][0-9]")
 SHA256_PATTERN = re.compile(r"[0-9a-f]{64}")
 STATUSES = {"detected", "automatically-excluded", "awaiting-review", "reviewed"}
@@ -40,6 +41,34 @@ def _valid_reason_codes(value: Any) -> bool:
         and all(_is_nonblank_string(item) for item in value)
         and len(set(value)) == len(value)
     )
+
+
+def work_metadata_violations(value: object) -> list[str]:
+    if not isinstance(value, dict):
+        return ["not-an-object"]
+
+    violations: list[str] = []
+    if set(value) != {
+        "schemaVersion",
+        "title",
+        "author",
+        "sourceUrl",
+        "metadataComplete",
+    }:
+        violations.append("invalid-fields")
+    if value.get("schemaVersion") != WORK_METADATA_SCHEMA_VERSION:
+        violations.append("invalid-schema-version")
+    for field in ("title", "author"):
+        if not _is_nonblank_string(value.get(field)):
+            violations.append(f"invalid-{field}")
+    source_url = value.get("sourceUrl")
+    if source_url is not None and not isinstance(source_url, str):
+        violations.append("invalid-sourceUrl")
+    if not isinstance(value.get("metadataComplete"), bool):
+        violations.append("invalid-metadataComplete")
+    if not all_strings_encode_utf8(value):
+        violations.append("non-utf8-string")
+    return sorted(set(violations))
 
 
 def _valid_offsets(candidate: dict[str, Any]) -> bool:
@@ -161,6 +190,10 @@ def candidate_record_violations(candidate: Any) -> list[str]:
         violations.append("non-utf8-string")
     if candidate.get("schemaVersion") != CANDIDATE_SCHEMA_VERSION:
         violations.append("invalid-schema-version")
+    if "workMetadata" in candidate and work_metadata_violations(
+        candidate["workMetadata"]
+    ):
+        violations.append("invalid-workMetadata")
 
     for field in (
         "sourceId",

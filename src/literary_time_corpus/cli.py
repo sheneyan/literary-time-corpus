@@ -10,6 +10,7 @@ from literary_time_corpus.extract import ExtractionError, extract_file
 from literary_time_corpus.io import OutputPathError
 from literary_time_corpus.normalize import NormalizationError, normalize_file
 from literary_time_corpus.report import ReportError, report_file
+from literary_time_corpus.scan import ScanError, scan_file
 from literary_time_corpus.validate import (
     ReleaseValidationError,
     ValidationInputError,
@@ -52,6 +53,15 @@ def build_parser() -> argparse.ArgumentParser:
     report = subparsers.add_parser("report", help="summarize candidate output")
     report.add_argument("--input", type=Path, required=True)
     report.add_argument("--output", type=Path, required=True)
+    scan = subparsers.add_parser("scan", help="scan a local UTF-8 TXT file")
+    scan.add_argument("input", type=Path)
+    scan.add_argument("--output", type=Path, required=True)
+    scan.add_argument("--title")
+    scan.add_argument("--author")
+    scan.add_argument("--source-url")
+    scan.add_argument("--start-marker")
+    scan.add_argument("--end-marker")
+    scan.add_argument("--force", action="store_true")
     return parser
 
 
@@ -141,6 +151,27 @@ def main(argv: Sequence[str] | None = None) -> int:
             validate_normalize_paths(arguments.input, arguments.output)
             report_file(arguments.input, arguments.output)
             return 0
+        if arguments.command == "scan":
+            summary = scan_file(
+                arguments.input,
+                arguments.output,
+                title=arguments.title,
+                author=arguments.author,
+                source_url=arguments.source_url,
+                start_marker=arguments.start_marker,
+                end_marker=arguments.end_marker,
+                force=arguments.force,
+            )
+            sys.stdout.write(
+                json.dumps(
+                    summary,
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                )
+                + "\n"
+            )
+            return 0
         raise CommandError("not-implemented", f"{arguments.command} is not implemented")
     except (
         CommandError,
@@ -149,6 +180,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         OutputPathError,
         ReportError,
         ReleaseValidationError,
+        ScanError,
         ValidationInputError,
     ) as error:
         return write_error(

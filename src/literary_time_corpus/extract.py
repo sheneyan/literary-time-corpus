@@ -6,7 +6,10 @@ import re
 from pathlib import Path
 from typing import Any, Callable
 
-from literary_time_corpus.candidate import candidate_record_violations
+from literary_time_corpus.candidate import (
+    candidate_record_violations,
+    work_metadata_violations,
+)
 from literary_time_corpus.io import write_jsonl_atomic
 from literary_time_corpus.normalized import normalized_record_violations
 
@@ -174,7 +177,14 @@ def _candidate(
     }
 
 
-def extract_candidates(document: dict[str, Any]) -> list[dict[str, Any]]:
+def extract_candidates(
+    document: dict[str, Any],
+    work_metadata: dict[str, object] | None = None,
+) -> list[dict[str, Any]]:
+    if work_metadata is not None and work_metadata_violations(work_metadata):
+        raise ExtractionError(
+            "invalid-work-metadata", "work metadata is malformed"
+        )
     text = document["analysisText"]
     candidates: list[dict[str, Any]] = []
     occupied: list[tuple[int, int]] = []
@@ -188,6 +198,8 @@ def extract_candidates(document: dict[str, Any]) -> list[dict[str, Any]]:
                 continue
             candidate = build(match)
             if candidate is not None:
+                if work_metadata is not None:
+                    candidate["workMetadata"] = dict(work_metadata)
                 candidates.append(candidate)
                 occupied.append((match.start(), match.end()))
 
