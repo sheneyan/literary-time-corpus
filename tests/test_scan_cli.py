@@ -30,6 +30,48 @@ def read_rows(destination: Path) -> list[dict[str, object]]:
     ]
 
 
+def candidate_with_context(
+    candidate: dict[str, object], context_before: str
+) -> dict[str, object]:
+    updated = dict(candidate)
+    matched_text = updated["matchedText"]
+    assert isinstance(matched_text, str)
+    context = context_before + matched_text
+    match_start = len(context_before.encode("utf-8"))
+    match_end = len(context.encode("utf-8"))
+    updated.update(
+        {
+            "context": context,
+            "excerpt": context,
+            "excerptStartByte": 0,
+            "excerptEndByte": match_end,
+            "matchStartByte": match_start,
+            "matchEndByte": match_end,
+            "quoteBefore": context_before,
+            "quoteTime": matched_text,
+            "quoteAfter": "",
+        }
+    )
+    resolution = updated["contextualResolution"]
+    assert isinstance(resolution, dict)
+    updated["contextualResolution"] = {
+        **resolution,
+        "evidenceStartByte": match_start,
+        "evidenceEndByte": match_end,
+        "evidenceText": matched_text,
+    }
+    identity = "\0".join(
+        (
+            str(updated["sourceId"]),
+            str(updated["analysisTextSha256"]),
+            str(match_start),
+            str(match_end),
+        )
+    )
+    updated["candidateId"] = hashlib.sha256(identity.encode("utf-8")).hexdigest()
+    return updated
+
+
 def test_scan_help_exposes_the_public_txt_interface(run_ltc) -> None:
     result = run_ltc("scan", "--help")
 
@@ -275,17 +317,16 @@ def test_scan_review_escapes_inline_metadata_without_changing_fixed_structure(
         "--output",
         destination,
         "--title",
-        f"Safe title\n=== {punctuation}",
+        f"Safe title {punctuation}",
         "--author",
-        "~~text~~\tAuthor",
+        "~~text~~ Author",
     )
 
     assert result.returncode == 0, result.stderr
     review = (destination / "review.md").read_text(encoding="utf-8")
     escaped_punctuation = "".join(f"\\{character}" for character in punctuation)
-    assert f"Title: Safe title\\n\\=\\=\\= {escaped_punctuation}" in review
-    assert "Author: \\~\\~text\\~\\~\\tAuthor" in review
-    assert "\n===\n" not in review
+    assert f"Title: Safe title {escaped_punctuation}" in review
+    assert "Author: \\~\\~text\\~\\~ Author" in review
     assert "~~text~~" not in review
     assert review.count("# Literary time candidate review\n") == 1
     assert review.count("This file is a review view, not a review record.") == 1
@@ -320,6 +361,131 @@ def test_review_renderer_escapes_multiline_rule_and_reason_fields(
     assert candidate["context"] in review
     assert "````text\n" in review
     assert "\n===\n" not in review
+
+
+@pytest.mark.parametrize(
+    ("field", "unsafe_value"),
+    [
+        ("--title", "Safe title\n==="),
+        ("--title", "safe\x1b]8;;https://evil.example\x07link\x1b]8;;\x07"),
+        ("--author", "safe\u202eunsafe"),
+    ],
+)
+def test_scan_rejects_unsafe_metadata_controls_without_echo(
+    run_ltc, tmp_path: Path, field: str, unsafe_value: str
+) -> None:
+    source = tmp_path / "book.txt"
+    destination = tmp_path / "scan"
+    source.write_text("The bell rang at 13:15.\n", encoding="utf-8")
+
+    result = run_ltc(
+        "scan", source, "--output", destination, field, unsafe_value
+    )
+
+    assert result.returncode == 2
+    assert result.stdout == ""
+    error = json.loads(result.stderr)["error"]
+    assert error["code"] == "invalid-scan-metadata"
+    assert error["details"] == {"stage": "metadata"}
+    assert unsafe_value not in result.stderr
+    assert "evil.example" not in result.stderr
+    assert not destination.exists()
+
+
+def test_review_renderer_visibly_encodes_non_whitespace_controls(
+    run_ltc, tmp_path: Path
+) -> None:
+    source = tmp_path / "book.txt"
+    destination = tmp_path / "scan"
+    source.write_text("The bell rang at 13:15.\n", encoding="utf-8")
+    assert run_ltc("scan", source, "--output", destination).returncode == 0
+    candidate = read_rows(destination)[0]
+    candidate["ruleId"] = "rule\x1b"
+    candidate["warningReasonCodes"] = [
+        "link\x1b]8;;https://evil.example\x07text\x1b]8;;\x07"
+    ]
+    candidate["exclusionReasonCodes"] = ["bidi\u202ereason"]
+    metadata = candidate["workMetadata"]
+    assert isinstance(metadata, dict)
+
+    review = render_review_markdown([candidate], metadata).decode("utf-8")
+
+    assert "Rule ID: rule\\x1b" in review
+    assert "Warnings: link\\x1b\\]8\\;\\;https\\:\\/\\/evil\\.example\\x07" in review
+    assert "Exclusions: bidi\\u202ereason" in review
+    assert "\x1b" not in review
+    assert "\x07" not in review
+    assert "\u202e" not in review
+
+
+def test_review_renderer_uses_bounded_alternate_fence_for_long_backtick_run(
+    run_ltc, tmp_path: Path
+) -> None:
+    source = tmp_path / "book.txt"
+    destination = tmp_path / "scan"
+    source.write_text("The bell rang at 13:15.\n", encoding="utf-8")
+    assert run_ltc("scan", source, "--output", destination).returncode == 0
+    original = read_rows(destination)[0]
+    candidate = candidate_with_context(original, "`" * 255 + "\n# injected\n")
+    metadata = candidate["workMetadata"]
+    assert isinstance(metadata, dict)
+
+    review = render_review_markdown([candidate], metadata).decode("utf-8")
+
+    assert f"~~~text\n{candidate['context']}\n~~~" in review
+    assert read_rows(destination)[0]["context"] == original["context"]
+
+
+def test_review_renderer_falls_back_when_both_fence_delimiters_are_too_long(
+    run_ltc, tmp_path: Path
+) -> None:
+    source = tmp_path / "book.txt"
+    destination = tmp_path / "scan"
+    source.write_text("The bell rang at 13:15.\n", encoding="utf-8")
+    assert run_ltc("scan", source, "--output", destination).returncode == 0
+    original = read_rows(destination)[0]
+    context_before = "`" * 255 + "\n" + "~" * 255 + "\n# injected\n"
+    candidate = candidate_with_context(original, context_before)
+    metadata = candidate["workMetadata"]
+    assert isinstance(metadata, dict)
+
+    review = render_review_markdown([candidate], metadata).decode("utf-8")
+
+    assert "\n    # injected\n" in review
+    assert "\n# injected\n" not in review
+    assert "`" * 256 not in review
+    assert "~" * 256 not in review
+    assert read_rows(destination)[0]["context"] == original["context"]
+
+
+def test_review_renderer_rejects_duplicate_candidate_ids(
+    run_ltc, tmp_path: Path
+) -> None:
+    source = tmp_path / "book.txt"
+    destination = tmp_path / "scan"
+    source.write_text("The bell rang at 13:15.\n", encoding="utf-8")
+    assert run_ltc("scan", source, "--output", destination).returncode == 0
+    candidate = read_rows(destination)[0]
+    metadata = candidate["workMetadata"]
+    assert isinstance(metadata, dict)
+
+    with pytest.raises(ValueError, match="duplicate candidate ID"):
+        render_review_markdown([candidate, dict(candidate)], metadata)
+
+
+def test_review_renderer_rejects_candidate_header_metadata_mismatch(
+    run_ltc, tmp_path: Path
+) -> None:
+    source = tmp_path / "book.txt"
+    destination = tmp_path / "scan"
+    source.write_text("The bell rang at 13:15.\n", encoding="utf-8")
+    assert run_ltc("scan", source, "--output", destination).returncode == 0
+    candidate = read_rows(destination)[0]
+    metadata = dict(candidate["workMetadata"])
+    metadata["author"] = "Different Author"
+
+    with pytest.raises(ValueError, match="candidate metadata mismatch"):
+        render_review_markdown([candidate], metadata)
 
 
 def test_scan_preserves_multibyte_utf8_offsets(run_ltc, tmp_path: Path) -> None:

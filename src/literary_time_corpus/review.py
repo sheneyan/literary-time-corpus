@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 import string
+import unicodedata
 
 from literary_time_corpus.candidate import (
     candidate_record_violations,
@@ -15,6 +16,8 @@ GROUPS = (
     ("excluded", "Approximate or excluded"),
 )
 BACKTICK_RUN = re.compile(r"`+")
+TILDE_RUN = re.compile(r"~+")
+MAX_FENCE_LENGTH = 255
 CONTROL_WHITESPACE = {
     "\t": r"\t",
     "\n": r"\n",
@@ -29,6 +32,15 @@ def _escape_markdown(value: str) -> str:
     for character in value:
         if character in CONTROL_WHITESPACE:
             rendered.append(CONTROL_WHITESPACE[character])
+        elif unicodedata.category(character) in {"Cc", "Cf"}:
+            codepoint = ord(character)
+            rendered.append(
+                f"\\x{codepoint:02x}"
+                if codepoint <= 0xFF
+                else f"\\u{codepoint:04x}"
+                if codepoint <= 0xFFFF
+                else f"\\U{codepoint:08x}"
+            )
         elif character.isspace() and character != " ":
             codepoint = ord(character)
             rendered.append(
@@ -44,11 +56,20 @@ def _escape_markdown(value: str) -> str:
 
 
 def _fenced_text(value: str) -> str:
-    longest_run = max(
+    longest_backtick_run = max(
         (len(match.group()) for match in BACKTICK_RUN.finditer(value)),
         default=0,
     )
-    fence = "`" * max(3, longest_run + 1)
+    longest_tilde_run = max(
+        (len(match.group()) for match in TILDE_RUN.finditer(value)),
+        default=0,
+    )
+    if longest_backtick_run < MAX_FENCE_LENGTH:
+        fence = "`" * max(3, longest_backtick_run + 1)
+    elif longest_tilde_run < MAX_FENCE_LENGTH:
+        fence = "~" * max(3, longest_tilde_run + 1)
+    else:
+        return "".join(f"    {line}" for line in value.splitlines(keepends=True))
     closing_prefix = "" if value.endswith("\n") else "\n"
     return f"{fence}text\n{value}{closing_prefix}{fence}"
 
@@ -122,6 +143,15 @@ def render_review_markdown(
     ]
     if any(candidate_violations):
         raise ValueError("invalid candidate")
+    candidate_ids = [candidate["candidateId"] for candidate in candidates]
+    if len(candidate_ids) != len(set(candidate_ids)):
+        raise ValueError("duplicate candidate ID")
+    if any(
+        "workMetadata" in candidate
+        and candidate["workMetadata"] != work_metadata
+        for candidate in candidates
+    ):
+        raise ValueError("candidate metadata mismatch")
 
     grouped = {key: [] for key, _ in GROUPS}
     for candidate in candidates:

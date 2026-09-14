@@ -109,20 +109,28 @@ def build_work_metadata(
     author: str | None,
     source_url: str | None,
 ) -> dict[str, object]:
-    if title is not None and not title.strip():
+    effective_title = title if title is not None else input_path.stem
+    effective_author = author if author is not None else "unknown"
+    if not effective_title.strip() or any(
+        unicodedata.category(character) in {"Cc", "Cf"}
+        for character in effective_title
+    ):
         raise _invalid_metadata()
-    if author is not None and not author.strip():
+    if not effective_author.strip() or any(
+        unicodedata.category(character) in {"Cc", "Cf"}
+        for character in effective_author
+    ):
         raise _invalid_metadata()
 
     if source_url is not None and not _valid_source_url(source_url):
         raise _invalid_metadata()
 
     metadata: dict[str, object] = {
-        "author": author if author is not None else "unknown",
+        "author": effective_author,
         "metadataComplete": title is not None and author is not None,
         "schemaVersion": WORK_METADATA_SCHEMA_VERSION,
         "sourceUrl": source_url,
-        "title": title if title is not None else input_path.stem,
+        "title": effective_title,
     }
     if work_metadata_violations(metadata):
         raise _invalid_metadata()
