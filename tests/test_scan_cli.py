@@ -110,6 +110,112 @@ def test_scan_creates_the_public_artifact_inventory(run_ltc, tmp_path: Path) -> 
     assert report["resolvedMinuteCount"] == 1
 
 
+def test_scan_run_manifest_has_exact_shape_and_binds_final_artifacts(
+    run_ltc, tmp_path: Path
+) -> None:
+    source = tmp_path / "my-novel.txt"
+    destination = tmp_path / "scan"
+    source_bytes = "At 13:15 the café bell rang.\n".encode("utf-8")
+    source.write_bytes(source_bytes)
+
+    result = run_ltc(
+        "scan",
+        source,
+        "--output",
+        destination,
+        "--title",
+        "Example Book",
+        "--author",
+        "Example Author",
+        "--source-url",
+        "https://example.org/book",
+    )
+
+    assert result.returncode == 0, result.stderr
+    run = json.loads((destination / "run.json").read_bytes())
+    assert set(run) == {
+        "artifactDigests",
+        "bodySelection",
+        "candidateCount",
+        "input",
+        "metadata",
+        "resolvedMinuteCount",
+        "schemaVersion",
+        "status",
+        "toolVersions",
+    }
+    assert run["schemaVersion"] == "scan-run-v1"
+    assert run["status"] == "complete"
+    assert run["input"] == {
+        "basename": "my-novel.txt",
+        "byteSize": len(source_bytes),
+        "sha256": hashlib.sha256(source_bytes).hexdigest(),
+    }
+    assert run["metadata"] == {
+        "author": "Example Author",
+        "metadataComplete": True,
+        "schemaVersion": "scan-work-metadata-v1",
+        "sourceUrl": "https://example.org/book",
+        "title": "Example Book",
+    }
+    assert run["bodySelection"] == {"mode": "full-file"}
+    assert run["toolVersions"] == {
+        "candidateSchemaVersion": "time-candidate-v1",
+        "extractionVersion": "extract-v1",
+        "normalizationVersion": "normalize-v1",
+        "normalizedSchemaVersion": "normalized-source-v1",
+        "reportSchemaVersion": "candidate-report-v1",
+        "reportVersion": "report-v1",
+        "scanVersion": "scan-v1",
+        "workMetadataSchemaVersion": "scan-work-metadata-v1",
+    }
+    assert set(run["artifactDigests"]) == ARTIFACTS - {"run.json"}
+    for name, digest in run["artifactDigests"].items():
+        content = (destination / name).read_bytes()
+        assert digest == {
+            "byteSize": len(content),
+            "sha256": hashlib.sha256(content).hexdigest(),
+        }
+
+    candidates_bytes = (destination / "candidates.jsonl").read_bytes()
+    candidates = read_rows(destination)
+    report = json.loads((destination / "report.json").read_bytes())
+    assert run["candidateCount"] == len(candidates) == report["candidateCount"]
+    assert run["resolvedMinuteCount"] == report["resolvedMinuteCount"]
+    assert report["inputSha256"] == hashlib.sha256(candidates_bytes).hexdigest()
+    review = (destination / "review.md").read_text(encoding="utf-8")
+    assert review.count("Candidate ID:") == run["candidateCount"]
+    for candidate in candidates:
+        assert review.count(f"Candidate ID: `{candidate['candidateId']}`") == 1
+
+
+def test_scan_run_manifest_records_literal_body_markers(
+    run_ltc, tmp_path: Path
+) -> None:
+    source = tmp_path / "marked.txt"
+    destination = tmp_path / "scan"
+    source.write_text("Header\nBEGIN\nAt 13:15.\nEND\nFooter\n", encoding="utf-8")
+
+    result = run_ltc(
+        "scan",
+        source,
+        "--output",
+        destination,
+        "--start-marker",
+        "BEGIN",
+        "--end-marker",
+        "END",
+    )
+
+    assert result.returncode == 0, result.stderr
+    run = json.loads((destination / "run.json").read_bytes())
+    assert run["bodySelection"] == {
+        "endMarker": "END",
+        "mode": "literal-markers",
+        "startMarker": "BEGIN",
+    }
+
+
 def test_scan_uses_documented_metadata_fallbacks(run_ltc, tmp_path: Path) -> None:
     source = tmp_path / "unfinished-title.txt"
     destination = tmp_path / "scan"
@@ -126,7 +232,7 @@ def test_scan_uses_documented_metadata_fallbacks(run_ltc, tmp_path: Path) -> Non
         "title": "unfinished-title",
     }
     assert read_rows(destination)[0]["workMetadata"] == expected
-    assert json.loads((destination / "run.json").read_text())["workMetadata"] == expected
+    assert json.loads((destination / "run.json").read_text())["metadata"] == expected
 
 
 def test_scan_records_explicit_metadata_without_changing_candidate_identity(
@@ -407,7 +513,7 @@ def test_scan_allows_zwj_and_zwnj_in_explicit_metadata(
     )
 
     assert result.returncode == 0, result.stderr
-    assert json.loads((destination / "run.json").read_text())["workMetadata"][
+    assert json.loads((destination / "run.json").read_text())["metadata"][
         "title"
     ] == title
     assert title in (destination / "review.md").read_text(encoding="utf-8")
@@ -424,7 +530,7 @@ def test_scan_allows_zwj_and_zwnj_in_default_filename_stem(
     result = run_ltc("scan", source, "--output", destination)
 
     assert result.returncode == 0, result.stderr
-    assert json.loads((destination / "run.json").read_text())["workMetadata"][
+    assert json.loads((destination / "run.json").read_text())["metadata"][
         "title"
     ] == title
     assert title in (destination / "review.md").read_text(encoding="utf-8")
@@ -629,6 +735,20 @@ def test_scan_basic_outputs_are_byte_deterministic(run_ltc, tmp_path: Path) -> N
         name: hashlib.sha256((second / name).read_bytes()).hexdigest()
         for name in ARTIFACTS
     }
+
+    first_payload = b"".join((first / name).read_bytes() for name in sorted(ARTIFACTS))
+    forbidden = (
+        str(first_source.parent),
+        str(second_source.parent),
+        str(Path.cwd()),
+        getpass.getuser(),
+        socket.gethostname(),
+        ".scan-",
+    )
+    for value in forbidden:
+        if value:
+            assert value.encode("utf-8") not in first_payload
+    assert re.search(rb"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}", first_payload) is None
 
 
 @pytest.mark.parametrize(

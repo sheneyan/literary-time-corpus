@@ -32,6 +32,7 @@ The synthetic CLI currently emits or accepts these schema and version fields:
 | rights input | `rights-decision-v1` | `policyVersion=rights-policy-v1`; `targetUseProfile=zi5-public-corpus-v1` |
 | release projection | `time-release-v1` | `releaseVersion=release-v1`; carries normalization, extraction, and rights-policy versions |
 | report | `candidate-report-v1` | `reportVersion=report-v1`; carries `candidateSchemaVersion` |
+| scan run manifest | `scan-run-v1` | `toolVersions.scanVersion=scan-v1`; binds every other scan artifact |
 
 This version table describes only the locally verified synthetic interface. It
 is not an acquisition manifest or a dataset publication specification.
@@ -41,6 +42,79 @@ therefore emits deterministic zero counts, zero coverage and duplicate
 fractions, empty maps/lists, the SHA-256 of empty bytes, and
 `candidateSchemaVersion=time-candidate-v1`; malformed nonempty rows still fail
 closed.
+
+### Scan run manifest
+
+`ltc scan` writes `run.json` as canonical UTF-8 JSON with exactly these
+top-level properties:
+
+```json
+{
+  "artifactDigests": {
+    "candidates.jsonl": {"byteSize": 0, "sha256": "<lowercase SHA-256>"},
+    "normalized.json": {"byteSize": 0, "sha256": "<lowercase SHA-256>"},
+    "report.json": {"byteSize": 0, "sha256": "<lowercase SHA-256>"},
+    "review.md": {"byteSize": 0, "sha256": "<lowercase SHA-256>"}
+  },
+  "bodySelection": {"mode": "full-file"},
+  "candidateCount": 0,
+  "input": {"basename": "book.txt", "byteSize": 0, "sha256": "<lowercase SHA-256>"},
+  "metadata": {
+    "author": "unknown",
+    "metadataComplete": false,
+    "schemaVersion": "scan-work-metadata-v1",
+    "sourceUrl": null,
+    "title": "book"
+  },
+  "resolvedMinuteCount": 0,
+  "schemaVersion": "scan-run-v1",
+  "status": "complete",
+  "toolVersions": {
+    "candidateSchemaVersion": "time-candidate-v1",
+    "extractionVersion": "extract-v1",
+    "normalizationVersion": "normalize-v1",
+    "normalizedSchemaVersion": "normalized-source-v1",
+    "reportSchemaVersion": "candidate-report-v1",
+    "reportVersion": "report-v1",
+    "scanVersion": "scan-v1",
+    "workMetadataSchemaVersion": "scan-work-metadata-v1"
+  }
+}
+```
+
+The numeric `byteSize` and lowercase hexadecimal `sha256` in `input` describe
+the untouched input bytes. `basename` is the final input filename only, never
+an absolute path. `metadata` is the exact `scan-work-metadata-v1` object copied
+to every scan-produced candidate. `candidateCount` is the number of validated
+candidate rows; `resolvedMinuteCount` is the number of distinct normalized
+minutes among validated `exact-minute-resolved` candidates. Both counts must
+agree with `report.json`.
+
+`bodySelection` has one of exactly two shapes. Full-file selection is
+`{"mode":"full-file"}` and contains no marker properties. Literal-marker
+selection is
+`{"endMarker":"<literal>","mode":"literal-markers","startMarker":"<literal>"}`;
+`startMarker` and `endMarker` preserve the two supplied values exactly.
+
+`toolVersions` has exactly the eight properties shown above. It binds the scan,
+normalization, extraction, and reporting tool versions to their output schema
+versions and records the schema of the copied work metadata.
+`artifactDigests` has exactly the four named entries shown above and hashes the
+final bytes of each artifact. `run.json` cannot and does not digest itself.
+
+Before publishing the staging directory, scan re-reads all five files. It
+validates the normalized record and every candidate through the shared
+validators; regenerates and compares the report, including its candidate-input
+hash and counts; recomputes the four artifact digests; and requires each
+candidate ID to occur exactly once in the Markdown review with the same total
+count. Any mismatch fails with `scan-verification-failed` at the `verification`
+stage, and the destination is not published.
+
+The manifest contains no current working directory, absolute path, username,
+hostname, staging name, timestamp, locale, timezone, or environment value.
+Given identical input bytes, basename, scan options, metadata, and tool
+versions, all five artifacts are byte-identical even when the source and output
+reside in different directories.
 
 ## Entity boundaries
 
@@ -162,6 +236,11 @@ sourceId NUL analysisTextSha256 NUL matchStartByte NUL matchEndByte
 
 The rule ID is deliberately excluded so two extractor versions finding the
 same source span have the same identity.
+
+Candidate `workMetadata` is optional only for candidates produced by the
+lower-level `ltc extract` command. Every candidate produced by `ltc scan` must
+contain `workMetadata`, it must be a valid `scan-work-metadata-v1` object, and
+it must exactly equal the manifest's `metadata` object.
 
 ### Review event
 

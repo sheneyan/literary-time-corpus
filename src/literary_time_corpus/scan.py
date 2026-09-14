@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import hashlib
 import ipaddress
+import json
 import os
 import re
 import shutil
@@ -11,6 +13,8 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from literary_time_corpus.candidate import (
+    CANDIDATE_SCHEMA_VERSION,
+    EXTRACTION_VERSION,
     WORK_METADATA_SCHEMA_VERSION,
     candidate_record_violations,
     work_metadata_violations,
@@ -18,8 +22,17 @@ from literary_time_corpus.candidate import (
 from literary_time_corpus.extract import ExtractionError, extract_candidates
 from literary_time_corpus.io import write_json_atomic, write_jsonl_atomic
 from literary_time_corpus.normalize import NormalizationError, normalize_bytes
-from literary_time_corpus.normalized import normalized_record_violations
-from literary_time_corpus.report import ReportError, build_report
+from literary_time_corpus.normalized import (
+    NORMALIZATION_VERSION,
+    NORMALIZED_SCHEMA_VERSION,
+    normalized_record_violations,
+)
+from literary_time_corpus.report import (
+    REPORT_SCHEMA_VERSION,
+    REPORT_VERSION,
+    ReportError,
+    build_report,
+)
 from literary_time_corpus.review import ReviewRenderError, render_review_markdown
 
 
@@ -32,6 +45,7 @@ ARTIFACT_NAMES = (
     "review.md",
     "run.json",
 )
+DIGESTED_ARTIFACT_NAMES = ARTIFACT_NAMES[:-1]
 INVALID_PERCENT_ESCAPE = re.compile(r"%(?![0-9A-Fa-f]{2})")
 HOST_LABEL = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?")
 HAZARDOUS_DIRECTIONAL_CONTROLS = frozenset(
@@ -174,6 +188,145 @@ def _read_regular_file(input_path: Path) -> bytes:
         os.close(descriptor)
 
 
+def _verification_failed() -> ScanError:
+    return ScanError(
+        "scan-verification-failed",
+        "generated scan artifacts failed verification",
+        stage="verification",
+    )
+
+
+def artifact_digest(path: Path) -> dict[str, object]:
+    content = path.read_bytes()
+    return {
+        "byteSize": len(content),
+        "sha256": hashlib.sha256(content).hexdigest(),
+    }
+
+
+def build_run_manifest(
+    *,
+    source: bytes,
+    input_basename: str,
+    work_metadata: dict[str, object],
+    start_marker: str | None,
+    end_marker: str | None,
+    candidates: list[dict[str, object]],
+    report: dict[str, object],
+    staging: Path,
+) -> dict[str, object]:
+    resolved_minutes = {
+        candidate["normalizedTimes"][0]
+        for candidate in candidates
+        if candidate["precision"] == "exact-minute-resolved"
+    }
+    if (
+        report.get("candidateCount") != len(candidates)
+        or report.get("resolvedMinuteCount") != len(resolved_minutes)
+    ):
+        raise _verification_failed()
+
+    body_selection: dict[str, object] = {"mode": "full-file"}
+    if start_marker is not None and end_marker is not None:
+        body_selection = {
+            "endMarker": end_marker,
+            "mode": "literal-markers",
+            "startMarker": start_marker,
+        }
+
+    return {
+        "artifactDigests": {
+            name: artifact_digest(staging / name)
+            for name in DIGESTED_ARTIFACT_NAMES
+        },
+        "bodySelection": body_selection,
+        "candidateCount": len(candidates),
+        "input": {
+            "basename": input_basename,
+            "byteSize": len(source),
+            "sha256": hashlib.sha256(source).hexdigest(),
+        },
+        "metadata": work_metadata,
+        "resolvedMinuteCount": len(resolved_minutes),
+        "schemaVersion": SCAN_SCHEMA_VERSION,
+        "status": "complete",
+        "toolVersions": {
+            "candidateSchemaVersion": CANDIDATE_SCHEMA_VERSION,
+            "extractionVersion": EXTRACTION_VERSION,
+            "normalizationVersion": NORMALIZATION_VERSION,
+            "normalizedSchemaVersion": NORMALIZED_SCHEMA_VERSION,
+            "reportSchemaVersion": REPORT_SCHEMA_VERSION,
+            "reportVersion": REPORT_VERSION,
+            "scanVersion": SCAN_VERSION,
+            "workMetadataSchemaVersion": WORK_METADATA_SCHEMA_VERSION,
+        },
+    }
+
+
+def _verify_staging(
+    staging_path: Path,
+    expected_run: dict[str, object],
+) -> None:
+    try:
+        normalized = json.loads((staging_path / "normalized.json").read_bytes())
+        candidate_bytes = (staging_path / "candidates.jsonl").read_bytes()
+        candidates = [json.loads(line) for line in candidate_bytes.splitlines()]
+        report = json.loads((staging_path / "report.json").read_bytes())
+        review = (staging_path / "review.md").read_text(encoding="utf-8")
+        run = json.loads((staging_path / "run.json").read_bytes())
+        regenerated_report = build_report(staging_path / "candidates.jsonl")
+        digests = {
+            name: artifact_digest(staging_path / name)
+            for name in DIGESTED_ARTIFACT_NAMES
+        }
+    except (OSError, UnicodeError, json.JSONDecodeError, ReportError, TypeError):
+        raise _verification_failed() from None
+
+    if (
+        run != expected_run
+        or normalized_record_violations(normalized)
+        or any(candidate_record_violations(candidate) for candidate in candidates)
+        or report != regenerated_report
+        or run.get("artifactDigests") != digests
+    ):
+        raise _verification_failed()
+
+    input_record = run.get("input")
+    metadata = run.get("metadata")
+    if (
+        not isinstance(input_record, dict)
+        or normalized.get("sourceSha256") != input_record.get("sha256")
+        or work_metadata_violations(metadata)
+        or any(candidate.get("workMetadata") != metadata for candidate in candidates)
+        or any(
+            candidate.get("sourceId") != normalized.get("sourceId")
+            or candidate.get("sourceSha256") != normalized.get("sourceSha256")
+            or candidate.get("analysisTextSha256")
+            != normalized.get("analysisTextSha256")
+            for candidate in candidates
+        )
+    ):
+        raise _verification_failed()
+
+    resolved_minutes = {
+        candidate["normalizedTimes"][0]
+        for candidate in candidates
+        if candidate["precision"] == "exact-minute-resolved"
+    }
+    candidate_ids = [candidate["candidateId"] for candidate in candidates]
+    if (
+        report.get("inputSha256")
+        != hashlib.sha256(candidate_bytes).hexdigest()
+        or report.get("candidateCount") != len(candidates)
+        or report.get("resolvedMinuteCount") != len(resolved_minutes)
+        or run.get("candidateCount") != len(candidates)
+        or run.get("resolvedMinuteCount") != len(resolved_minutes)
+        or review.count("Candidate ID:") != len(candidates)
+        or any(review.count(f"Candidate ID: `{candidate_id}`") != 1 for candidate_id in candidate_ids)
+    ):
+        raise _verification_failed()
+
+
 def scan_to_staging(
     input_path: Path,
     staging_path: Path,
@@ -224,21 +377,21 @@ def scan_to_staging(
     except ReviewRenderError as error:
         raise ScanError(error.code, str(error), stage="review-render") from error
     (staging_path / "review.md").write_bytes(review)
-    run = {
-        "bodyBoundary": {
-            "endMarker": end_marker,
-            "mode": "markers" if start_marker is not None else "full-file",
-            "startMarker": start_marker,
-        },
-        "candidateCount": report["candidateCount"],
-        "inputName": input_path.name,
-        "resolvedMinuteCount": report["resolvedMinuteCount"],
-        "scanVersion": SCAN_VERSION,
-        "schemaVersion": SCAN_SCHEMA_VERSION,
-        "status": "complete",
-        "workMetadata": work_metadata,
-    }
+    try:
+        run = build_run_manifest(
+            source=source,
+            input_basename=input_path.name,
+            work_metadata=work_metadata,
+            start_marker=start_marker,
+            end_marker=end_marker,
+            candidates=candidates,
+            report=report,
+            staging=staging_path,
+        )
+    except OSError:
+        raise _verification_failed() from None
     write_json_atomic(staging_path / "run.json", run)
+    _verify_staging(staging_path, run)
     return {
         "candidateCount": report["candidateCount"],
         "resolvedMinuteCount": report["resolvedMinuteCount"],
