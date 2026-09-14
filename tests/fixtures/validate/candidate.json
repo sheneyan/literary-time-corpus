@@ -1,0 +1,28 @@
+{
+  "analysisTextSha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "candidateId": "f1368194b360710b749d6db17fc2cdeaa65c9075bb1ae18437a5fe108ddb8f9f",
+  "excerpt": "钟声响起。At 1:17 a.m., he left.",
+  "excerptEndByte": 137,
+  "excerptStartByte": 100,
+  "exclusionReasonCodes": [],
+  "extractionVersion": "extract-v1",
+  "matchEndByte": 127,
+  "matchStartByte": 118,
+  "matchedText": "1:17 a.m.",
+  "normalizationVersion": "normalize-v1",
+  "normalizedTimes": ["01:17"],
+  "precision": "exact-minute-resolved",
+  "provenance": {
+    "provider": "Project Gutenberg",
+    "providerItemId": "synthetic-117",
+    "sourcePageUrl": "https://www.gutenberg.org/ebooks/117"
+  },
+  "quoteAfter": ", he left.",
+  "quoteBefore": "钟声响起。At ",
+  "quoteTime": "1:17 a.m.",
+  "schemaVersion": "time-candidate-v1",
+  "sourceId": "synthetic_aaaaaaaaaaaa",
+  "sourceSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "status": "awaiting-review",
+  "warningReasonCodes": []
+}

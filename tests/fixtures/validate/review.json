@@ -1,0 +1,29 @@
+{
+  "attribution": {
+    "author": "Synthetic Author",
+    "title": "Synthetic Novel",
+    "workId": "work-synthetic-117"
+  },
+  "candidateId": "f1368194b360710b749d6db17fc2cdeaa65c9075bb1ae18437a5fe108ddb8f9f",
+  "confirmedExcerpt": {
+    "excerpt": "钟声响起。At 1:17 a.m., he left.",
+    "excerptEndByte": 137,
+    "excerptStartByte": 100,
+    "matchEndByte": 127,
+    "matchStartByte": 118,
+    "quoteAfter": ", he left.",
+    "quoteBefore": "钟声响起。At ",
+    "quoteTime": "1:17 a.m."
+  },
+  "confirmedNormalizedTimes": ["01:17"],
+  "confirmedPrecision": "exact-minute-resolved",
+  "decision": "accepted",
+  "reasonCodes": [],
+  "reviewId": "review-synthetic-117-v1",
+  "reviewedAt": "2026-09-14T08:00:00Z",
+  "reviewer": "reviewer-a",
+  "rightsDecisionId": "rights-synthetic-117-v1",
+  "schemaVersion": "time-review-v1",
+  "supersedingRejectionIds": [],
+  "unresolvedWarningReasonCodes": []
+}

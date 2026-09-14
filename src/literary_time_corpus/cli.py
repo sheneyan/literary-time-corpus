@@ -9,6 +9,11 @@ from typing import Sequence
 
 from literary_time_corpus.extract import ExtractionError, extract_file
 from literary_time_corpus.normalize import NormalizationError, normalize_file
+from literary_time_corpus.validate import (
+    ReleaseValidationError,
+    ValidationInputError,
+    validate_file,
+)
 
 
 class CommandError(ValueError):
@@ -35,13 +40,25 @@ def build_parser() -> argparse.ArgumentParser:
     extract = subparsers.add_parser("extract", help="extract time candidates")
     extract.add_argument("--input", type=Path, required=True)
     extract.add_argument("--output", type=Path, required=True)
-    subparsers.add_parser("validate", help="validate a release candidate")
+    validate = subparsers.add_parser("validate", help="validate a release candidate")
+    validate.add_argument("--candidate", type=Path, required=True)
+    validate.add_argument("--review", type=Path, required=True)
+    validate.add_argument("--rights", type=Path, required=True)
+    validate.add_argument("--output", type=Path, required=True)
     subparsers.add_parser("report", help="summarize candidate output")
     return parser
 
 
-def write_error(code: str, message: str, *, exit_code: int) -> int:
+def write_error(
+    code: str,
+    message: str,
+    *,
+    exit_code: int,
+    details: dict[str, object] | None = None,
+) -> int:
     envelope = {"error": {"code": code, "message": message}}
+    if details is not None:
+        envelope["error"]["details"] = details
     sys.stderr.write(
         json.dumps(envelope, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
         + "\n"
@@ -114,9 +131,39 @@ def main(argv: Sequence[str] | None = None) -> int:
                 remove_unchanged_regular_file(arguments.output, prior_output)
                 raise
             return 0
+        if arguments.command == "validate":
+            for input_path in (
+                arguments.candidate,
+                arguments.review,
+                arguments.rights,
+            ):
+                validate_normalize_paths(input_path, arguments.output)
+            prior_output = regular_file_identity(arguments.output)
+            try:
+                validate_file(
+                    arguments.candidate,
+                    arguments.review,
+                    arguments.rights,
+                    arguments.output,
+                )
+            except Exception:
+                remove_unchanged_regular_file(arguments.output, prior_output)
+                raise
+            return 0
         raise CommandError("not-implemented", f"{arguments.command} is not implemented")
-    except (CommandError, ExtractionError, NormalizationError) as error:
-        return write_error(error.code, str(error), exit_code=2)
+    except (
+        CommandError,
+        ExtractionError,
+        NormalizationError,
+        ReleaseValidationError,
+        ValidationInputError,
+    ) as error:
+        return write_error(
+            error.code,
+            str(error),
+            exit_code=2,
+            details=getattr(error, "details", None),
+        )
     except Exception:
         return write_error(
             "internal-error", "an unexpected internal error occurred", exit_code=1

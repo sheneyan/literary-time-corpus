@@ -1,0 +1,30 @@
+{
+  "assessments": [
+    {
+      "basisReasonCodes": ["us-public-domain-reviewed"],
+      "decisionDate": "2026-09-14",
+      "editionStatus": "eligible",
+      "evidenceReferences": ["evidence:us-synthetic-117"],
+      "jurisdiction": "US",
+      "reviewer": "rights-reviewer-a",
+      "workStatus": "not-restricted"
+    },
+    {
+      "basisReasonCodes": ["cn-term-and-edition-reviewed"],
+      "decisionDate": "2026-09-14",
+      "editionStatus": "eligible",
+      "evidenceReferences": ["evidence:cn-synthetic-117"],
+      "jurisdiction": "CN-mainland",
+      "reviewer": "rights-reviewer-b",
+      "workStatus": "not-restricted"
+    }
+  ],
+  "candidateId": "f1368194b360710b749d6db17fc2cdeaa65c9075bb1ae18437a5fe108ddb8f9f",
+  "decision": "eligible",
+  "decisionDate": "2026-09-14",
+  "decisionId": "rights-synthetic-117-v1",
+  "policyVersion": "rights-policy-v1",
+  "reviewer": "rights-reviewer-lead",
+  "schemaVersion": "rights-decision-v1",
+  "targetUseProfile": "zi5-public-corpus-v1"
+}
