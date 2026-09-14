@@ -129,4 +129,5 @@ contribution and publication workflows have not been approved. Please open an
 issue before submitting source texts or literary excerpts. Never commit source
 ebooks: local source and analysis files belong under ignored `.local/` paths.
 Until Gate 4 opens a release process, `releases/` may contain only a root
-`README.md` or `.gitkeep` placeholder, never corpus data in any format.
+`README.md` matching the approved no-release template or a zero-byte `.gitkeep`,
+never corpus data in any format.

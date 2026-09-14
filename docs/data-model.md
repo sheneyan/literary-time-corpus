@@ -235,16 +235,26 @@ these conventions:
 - binary ebook, document, HTML, and archive extensions are rejected throughout
   the repository;
 - likely raw-text extensions such as `.txt`, `.text`, `.utf8`, and `.utf-8` are
-  rejected everywhere except small UTF-8 files under `tests/fixtures/` whose
-  content explicitly identifies them as synthetic and contains no copied
-  Project Gutenberg license boilerplate;
+  rejected everywhere except the three current synthetic fixtures, each
+  approved by its exact repository path and SHA-256 rather than by a
+  self-attested `synthetic` label;
 - `manifests/` accepts committed metadata only as JSON, JSON Lines, or RDF, plus
   root `README.md`/`.gitkeep` placeholders and strictly validated relative
   ebook-path lists named `*-paths.txt`; and
-- while Gate 4 remains unopened, `releases/` accepts only root `README.md` and
-  `.gitkeep` placeholders. Every other tracked file is rejected regardless of
-  whether it uses JSON, CSV, TSV, NDJSON, a binary extension, or no extension.
+- while Gate 4 remains unopened, `releases/` accepts only a zero-byte root
+  `.gitkeep` or a root `README.md` whose bytes exactly equal the approved
+  template below. Every other tracked file is rejected regardless of whether
+  it uses JSON, CSV, TSV, NDJSON, a binary extension, or no extension.
+
+```markdown
+# Releases
+
+No public corpus release is approved.
+```
 
 The release rule is intentionally absolute because Gate 4 has approved no
 public excerpt artifact. A future release approval process must replace it
-before any corpus package is committed.
+before any corpus package is committed. Changing a synthetic fixture's path or
+any byte of its contents also fails repository policy until a reviewer verifies
+that it remains fully synthetic and deliberately updates the fixture SHA-256
+allowlist.

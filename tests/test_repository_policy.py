@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import re
 import subprocess
 from pathlib import Path, PurePosixPath
@@ -30,9 +31,11 @@ EBOOK_OR_ARCHIVE_SUFFIXES = {
     ".zip",
 }
 RAW_TEXT_SUFFIXES = {".text", ".txt", ".utf-8", ".utf8"}
-ALLOWED_RELEASE_PLACEHOLDERS = {
-    PurePosixPath("releases/.gitkeep"),
-    PurePosixPath("releases/README.md"),
+ALLOWED_RELEASE_PLACEHOLDER_BYTES = {
+    PurePosixPath("releases/.gitkeep"): b"",
+    PurePosixPath("releases/README.md"): (
+        b"# Releases\n\nNo public corpus release is approved.\n"
+    ),
 }
 ALLOWED_MANIFEST_PLACEHOLDERS = {
     PurePosixPath("manifests/.gitkeep"),
@@ -41,6 +44,17 @@ ALLOWED_MANIFEST_PLACEHOLDERS = {
 ALLOWED_MANIFEST_SUFFIXES = {".json", ".jsonl", ".rdf"}
 PATH_LIST_NAME = re.compile(r"[a-z0-9][a-z0-9._-]*-paths\.txt")
 PATH_LIST_LINE = re.compile(r"[A-Za-z0-9._/-]+\.txt")
+APPROVED_SYNTHETIC_FIXTURE_SHA256 = {
+    PurePosixPath("tests/fixtures/extract/times.txt"): (
+        "dc5cd733c1d408a52912d1bae3a8dc6ba03d555a30f283b930613955deb4b806"
+    ),
+    PurePosixPath("tests/fixtures/normalize/missing-start.txt"): (
+        "8351d668433abbf4591961d7ca9d6b052a814370788b415116630540613f9ae8"
+    ),
+    PurePosixPath("tests/fixtures/normalize/valid.txt"): (
+        "5e4fb58e2bad12b054d129295152fba067b6147b7f11e2fcc83799ab511ccfb1"
+    ),
+}
 
 
 def tracked_paths() -> list[PurePosixPath]:
@@ -71,20 +85,10 @@ def tracked_index_files() -> dict[str, bytes]:
 
 
 def is_synthetic_text_fixture(path: PurePosixPath, content: bytes) -> bool:
-    if path.parts[:2] != ("tests", "fixtures") or len(content) > 64 * 1024:
-        return False
-    try:
-        text = content.decode("utf-8")
-    except UnicodeDecodeError:
-        return False
-    lowered = text.lower()
+    expected_hash = APPROVED_SYNTHETIC_FIXTURE_SHA256.get(path)
     return (
-        "synthetic" in lowered
-        and "project gutenberg license" not in lowered
-        and any(
-            marker in lowered
-            for marker in ("synthetic metadata", "ebook synthetic", "synthetic fixture")
-        )
+        expected_hash is not None
+        and hashlib.sha256(content).hexdigest() == expected_hash
     )
 
 
@@ -113,7 +117,8 @@ def policy_violations(files: Mapping[str, bytes]) -> list[str]:
     for raw_path, content in files.items():
         path = PurePosixPath(raw_path)
         if path.parts[:1] == ("releases",):
-            if path not in ALLOWED_RELEASE_PLACEHOLDERS:
+            expected_placeholder = ALLOWED_RELEASE_PLACEHOLDER_BYTES.get(path)
+            if expected_placeholder is None or content != expected_placeholder:
                 violations.append(raw_path)
             continue
         if path.parts[:1] == ("manifests",):
@@ -166,11 +171,22 @@ def test_closed_gate_4_rejects_release_artifacts_regardless_of_format() -> None:
 
 def test_closed_gate_4_allows_only_explicit_root_placeholders() -> None:
     files = {
-        "releases/README.md": b"No release is approved.\n",
+        "releases/README.md": (
+            b"# Releases\n\nNo public corpus release is approved.\n"
+        ),
         "releases/.gitkeep": b"",
     }
 
     assert policy_violations(files) == []
+
+
+def test_release_placeholders_must_match_the_approved_bytes() -> None:
+    files = {
+        "releases/README.md": b"Synthetic excerpt: at 1:17 a.m.\n",
+        "releases/.gitkeep": b"hidden release data\n",
+    }
+
+    assert policy_violations(files) == sorted(files)
 
 
 def test_ebook_and_raw_text_rules_cannot_be_bypassed_by_directory() -> None:
@@ -189,6 +205,17 @@ def test_text_fixture_exemption_requires_verified_synthetic_content() -> None:
     files = {
         "tests/fixtures/example.txt": b"an unlabeled literary passage",
         "other/synthetic.txt": b"synthetic fixture\n",
+    }
+
+    assert policy_violations(files) == sorted(files)
+
+
+def test_synthetic_label_cannot_self_approve_copied_fixture_prose() -> None:
+    files = {
+        "tests/fixtures/normalize/valid.txt": (
+            b"Synthetic metadata only.\nCopied literary prose follows.\n"
+        ),
+        "tests/fixtures/new.txt": b"synthetic fixture\n",
     }
 
     assert policy_violations(files) == sorted(files)
