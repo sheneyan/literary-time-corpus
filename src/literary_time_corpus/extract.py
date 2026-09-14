@@ -56,6 +56,22 @@ NUMBER_WORDS = {
 HOUR_WORDS = {word: value for word, value in NUMBER_WORDS.items() if value <= 12}
 NUMBER_PATTERN = "|".join(sorted(NUMBER_WORDS, key=len, reverse=True))
 HOUR_PATTERN = "|".join(sorted(HOUR_WORDS, key=len, reverse=True))
+SCRIPTURE_REFERENCE_BEFORE = re.compile(
+    r"\b(?:[1-3]\s*)?(?:"
+    r"gen(?:esis)?|exod(?:us)?|lev(?:iticus)?|num(?:bers)?|deut(?:eronomy)?|"
+    r"josh(?:ua)?|judg(?:es)?|ruth|sam(?:uel)?|kings?|chron(?:icles)?|ezra|"
+    r"neh(?:emiah)?|esth(?:er)?|job|ps(?:alms?)?|prov(?:erbs)?|"
+    r"eccl(?:esiastes)?|song(?:\s+of\s+(?:songs|solomon))?|isa(?:iah)?|"
+    r"jer(?:emiah)?|lam(?:entations)?|ezek(?:iel)?|dan(?:iel)?|hos(?:ea)?|"
+    r"joel|amos|obad(?:iah)?|jonah|mic(?:ah)?|nah(?:um)?|hab(?:akkuk)?|"
+    r"zeph(?:aniah)?|hag(?:gai)?|zech(?:ariah)?|mal(?:achi)?|matt(?:hew)?|"
+    r"mark|luke|john|acts|rom(?:ans)?|cor(?:inthians)?|gal(?:atians)?|"
+    r"eph(?:esians)?|phil(?:ippians)?|col(?:ossians)?|thess(?:alonians)?|"
+    r"tim(?:othy)?|titus|philem(?:on)?|heb(?:rews)?|james|peter|jude|"
+    r"rev(?:elation)?"
+    r")\.?\s+$",
+    re.IGNORECASE,
+)
 
 
 def _read_normalized(path: Path) -> dict[str, Any]:
@@ -224,7 +240,7 @@ def extract_candidates(document: dict[str, Any]) -> list[dict[str, Any]]:
     )
 
     numeric_meridiem = re.compile(
-        r"(?<![\w$])([1-9]|1[0-2]):([0-5][0-9])\s*([ap])\.?m\.?(?!\w)",
+        r"(?<![\w$])((?:0?[1-9]|1[0-2])):([0-5][0-9])\s*([ap])\.?m\.?(?!\w)",
         re.IGNORECASE,
     )
 
@@ -311,14 +327,17 @@ def extract_candidates(document: dict[str, Any]) -> list[dict[str, Any]]:
     def build_bare(match: re.Match[str]) -> dict[str, Any] | None:
         following = text[match.end() : match.end() + 12]
         preceding = text[max(0, match.start() - 32) : match.start()]
-        if re.match(r"(?::[0-5][0-9]|\s+(?:hours?|minutes?|seconds?)\b)", following, re.IGNORECASE):
+        if re.match(
+            r"(?::[0-5][0-9]|\s*[ap]\.?m\.?(?!\w)|\s+(?:hours?|minutes?|seconds?)\b)",
+            following,
+            re.IGNORECASE,
+        ):
             return None
         if re.search(r"[$€£¥]\s*$", preceding):
             return None
         if re.search(r"\b(?:chapter|verse)\s+$", preceding, re.IGNORECASE):
             return None
-        title_reference = re.search(r"\b([A-Z][A-Za-z]*)\s+$", preceding)
-        if title_reference and title_reference.group(1) != "At":
+        if SCRIPTURE_REFERENCE_BEFORE.search(preceding):
             return None
         raw_hour = match.group(1)
         hour, minute = int(raw_hour), int(match.group(2))

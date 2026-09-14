@@ -48,7 +48,7 @@ def test_extract_resolves_initial_exact_time_rule_families(run_ltc, tmp_path: Pa
 
     expected = {
         "1:17 a.m.": ("numeric-12-hour", ["01:17"]),
-        "9:03 P.M.": ("numeric-12-hour", ["21:03"]),
+        "09:03 P.M.": ("numeric-12-hour", ["21:03"]),
         "noon": ("named-time", ["12:00"]),
         "midnight": ("named-time", ["00:00"]),
     }
@@ -60,6 +60,7 @@ def test_extract_resolves_initial_exact_time_rule_families(run_ltc, tmp_path: Pa
         assert candidate["status"] == "detected"
         assert candidate["exclusionReasonCodes"] == []
         assert candidate["warningReasonCodes"] == []
+    assert not [row for row in rows if row["matchedText"] == "09:03"]
 
     ambiguous_written = {
         "twenty minutes past four": ("written-minutes", ["04:20", "16:20"]),
@@ -116,6 +117,8 @@ def test_extract_does_not_release_false_positive_numeric_shapes(run_ltc, tmp_pat
         "¥5:20",
         "John 3:16",
         "Romans 13:15",
+        "Rom. 17:33",
+        "romans 18:34",
         "chapter 12:10",
         "13:15:42",
         "1:30 hours",
@@ -166,6 +169,18 @@ def test_extract_supports_zero_padded_24_hour_times(run_ltc, tmp_path: Path) -> 
     assert midnight["normalizedTimes"] == ["00:07"]
     assert midnight["precision"] == "exact-minute-resolved"
     assert midnight["ruleFamily"] == "numeric-24-hour"
+
+
+def test_extract_keeps_narrative_title_case_time_introducers(run_ltc, tmp_path: Path) -> None:
+    _document, rows, _output = extract_fixture(run_ltc, tmp_path)
+
+    by_time = candidate_by_text(rows, "15:31")
+    after_time = candidate_by_text(rows, "16:32")
+
+    assert by_time["normalizedTimes"] == ["15:31"]
+    assert by_time["precision"] == "exact-minute-resolved"
+    assert after_time["normalizedTimes"] == ["16:32"]
+    assert after_time["precision"] == "exact-minute-resolved"
 
 
 def test_extract_emits_exact_utf8_offsets_ids_context_and_segmentation(
