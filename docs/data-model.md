@@ -88,6 +88,13 @@ For the Gate 2 marker normalizer, `transformationLog` contains one deterministic
 `analysisText`. No implicit trimming or line-ending conversion is recorded or
 performed.
 
+Both `ltc extract` and `ltc validate` use the same normalized-record validator.
+It accepts only `schemaVersion=normalized-source-v1` with
+`normalizationVersion=normalize-v1`; verifies the analysis hash and synthetic
+source-ID/hash relationship; and requires nonempty, internally consistent body
+bounds plus the exact one-entry transformation log described above. Missing,
+extra, or inconsistent transformation fields fail closed.
+
 ### Candidate match
 
 An immutable automated observation against one source snapshot.
@@ -112,6 +119,13 @@ UTF-8 analysis text and lie within the matched expression. Supported methods
 are `explicit-meridiem`, `explicit-24-hour-clock`, and `named-time`.
 Ambiguous and approximate candidates set `contextualResolution` explicitly to
 JSON `null`; absence, an empty object, or an invented method is invalid.
+
+The method also fixes the evidence semantics. `explicit-meridiem` selects only
+the complete AM/PM suffix token (including its original punctuation),
+`explicit-24-hour-clock` selects the complete numeric match and accepts no
+meridiem, and `named-time` selects exactly the original `noon` or `midnight`
+token. Each method must agree with the normalized minute produced from that
+matched text; a smaller but internally consistent evidence span is invalid.
 
 The Gate 2 candidate also emits
 `sourceHashStatus="carried-from-normalization"`. This means extraction checked
@@ -251,9 +265,10 @@ these conventions:
 - binary ebook, document, HTML, and archive extensions are rejected throughout
   the repository;
 - likely raw-text extensions such as `.txt`, `.text`, `.utf8`, and `.utf-8` are
-  rejected everywhere except the three current synthetic fixtures, each
-  approved by its exact repository path and SHA-256 rather than by a
-  self-attested `synthetic` label;
+  rejected throughout the repository;
+- every file under `tests/fixtures/`, including JSON and JSONL, is approved only
+  by its exact repository path and SHA-256 rather than by extension or a
+  self-attested `synthetic` label; a copied path or one-byte change fails;
 - while Gate 3 remains unopened, `manifests/` and `artifacts/` accept only an
   exact zero-byte root `.gitkeep` or their fixed root `README.md` placeholder;
 - while Gate 4 remains unopened, `releases/` has the same deny-by-default rule;

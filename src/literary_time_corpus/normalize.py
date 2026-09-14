@@ -5,10 +5,13 @@ import re
 from pathlib import Path
 
 from literary_time_corpus.io import write_json_atomic
+from literary_time_corpus.normalized import (
+    NORMALIZATION_VERSION,
+    NORMALIZED_SCHEMA_VERSION,
+    TRANSFORMATION_METHOD,
+)
 
 
-SCHEMA_VERSION = "normalized-source-v1"
-NORMALIZATION_VERSION = "normalize-v1"
 START_MARKER = re.compile(
     rb"^\*\*\* START OF (?:THE|THIS) PROJECT GUTENBERG EBOOK[^\r\n]*\*\*\*\r?$",
     re.MULTILINE,
@@ -72,14 +75,14 @@ def normalize_file(input_path: Path, output_path: Path) -> None:
         "bodyEndByte": body_end,
         "bodyStartByte": body_start,
         "normalizationVersion": NORMALIZATION_VERSION,
-        "schemaVersion": SCHEMA_VERSION,
+        "schemaVersion": NORMALIZED_SCHEMA_VERSION,
         "sourceId": f"synthetic_{source_hash[:12]}",
         "sourceSha256": source_hash,
         "transformationLog": [
             {
                 "inputEndByte": body_end,
                 "inputStartByte": body_start,
-                "method": "project-gutenberg-marker-body-selection",
+                "method": TRANSFORMATION_METHOD,
                 "outputEndByte": len(analysis),
                 "outputStartByte": 0,
             }

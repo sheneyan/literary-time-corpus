@@ -7,11 +7,11 @@ from pathlib import Path
 from typing import Any, Callable
 
 from literary_time_corpus.io import write_jsonl_atomic
+from literary_time_corpus.normalized import normalized_record_violations
 
 
 SCHEMA_VERSION = "time-candidate-v1"
 EXTRACTION_VERSION = "extract-v1"
-EXPECTED_NORMALIZED_SCHEMA = "normalized-source-v1"
 
 
 class ExtractionError(ValueError):
@@ -80,34 +80,20 @@ def _read_normalized(path: Path) -> dict[str, Any]:
             "invalid-normalized-source", "could not read a normalized source document"
         ) from error
 
-    required_strings = (
-        "analysisText",
-        "analysisTextSha256",
-        "sourceId",
-        "sourceSha256",
-        "normalizationVersion",
-    )
-    if (
-        not isinstance(document, dict)
-        or document.get("schemaVersion") != EXPECTED_NORMALIZED_SCHEMA
-        or any(not isinstance(document.get(field), str) for field in required_strings)
-        or not re.fullmatch(r"[0-9a-f]{64}", document.get("sourceSha256", ""))
-        or not re.fullmatch(r"[0-9a-f]{64}", document.get("analysisTextSha256", ""))
-    ):
-        raise ExtractionError(
-            "invalid-normalized-source", "normalized source document is malformed"
-        )
-
-    actual_analysis_hash = hashlib.sha256(document["analysisText"].encode("utf-8")).hexdigest()
-    if actual_analysis_hash != document["analysisTextSha256"]:
+    violations = normalized_record_violations(document)
+    if "analysis-hash-mismatch" in violations:
         raise ExtractionError(
             "invalid-normalized-source",
             "analysis text hash does not match its content",
         )
-    if document["sourceId"] != f"synthetic_{document['sourceSha256'][:12]}":
+    if "source-identity-mismatch" in violations:
         raise ExtractionError(
             "invalid-normalized-source",
             "source identity is inconsistent with carried source hash",
+        )
+    if violations:
+        raise ExtractionError(
+            "invalid-normalized-source", "normalized source document is malformed"
         )
     return document
 

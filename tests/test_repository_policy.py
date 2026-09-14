@@ -54,6 +54,21 @@ APPROVED_SYNTHETIC_FIXTURE_SHA256 = {
     PurePosixPath("tests/fixtures/normalize/valid.txt"): (
         "5e4fb58e2bad12b054d129295152fba067b6147b7f11e2fcc83799ab511ccfb1"
     ),
+    PurePosixPath("tests/fixtures/report/candidates.jsonl"): (
+        "c1c4834297224e14b253c1ca913d9b31093a791e419368dddacb015146edbecb"
+    ),
+    PurePosixPath("tests/fixtures/validate/analysis.json"): (
+        "e231f0223fec15223c07d6d6295ec8c1a1cd1fb1e8c57a22510746e6c6e465de"
+    ),
+    PurePosixPath("tests/fixtures/validate/candidate.json"): (
+        "5c74acf99f2019a3d7f4c22e2e237450528118276dc3803deaf6e175ed7eb24b"
+    ),
+    PurePosixPath("tests/fixtures/validate/review.json"): (
+        "2864557eefc66ea9eae432ea3412ae851d7fafad8e4d169ec32141086fc3d385"
+    ),
+    PurePosixPath("tests/fixtures/validate/rights.json"): (
+        "005a15b40d8ede2663f6a7908b2d943f9ee9e338e25df555ad7af3249f53d2ad"
+    ),
 }
 
 
@@ -84,7 +99,7 @@ def tracked_index_files() -> dict[str, bytes]:
     return files
 
 
-def is_synthetic_text_fixture(path: PurePosixPath, content: bytes) -> bool:
+def is_approved_synthetic_fixture(path: PurePosixPath, content: bytes) -> bool:
     expected_hash = APPROVED_SYNTHETIC_FIXTURE_SHA256.get(path)
     return (
         expected_hash is not None
@@ -96,6 +111,10 @@ def policy_violations(files: Mapping[str, bytes]) -> list[str]:
     violations: list[str] = []
     for raw_path, content in files.items():
         path = PurePosixPath(raw_path)
+        if path.parts[:2] == ("tests", "fixtures"):
+            if not is_approved_synthetic_fixture(path, content):
+                violations.append(raw_path)
+            continue
         if path.parts[:1] in {("manifests",), ("artifacts",), ("releases",)}:
             expected_placeholder = ALLOWED_DATA_ROOT_PLACEHOLDER_BYTES.get(path)
             if expected_placeholder is None or content != expected_placeholder:
@@ -104,9 +123,7 @@ def policy_violations(files: Mapping[str, bytes]) -> list[str]:
         if path.suffix.lower() in EBOOK_OR_ARCHIVE_SUFFIXES:
             violations.append(raw_path)
             continue
-        if path.suffix.lower() in RAW_TEXT_SUFFIXES and not is_synthetic_text_fixture(
-            path, content
-        ):
+        if path.suffix.lower() in RAW_TEXT_SUFFIXES:
             violations.append(raw_path)
     return sorted(violations)
 
@@ -187,6 +204,17 @@ def test_synthetic_label_cannot_self_approve_copied_fixture_prose() -> None:
             b"Synthetic metadata only.\nCopied literary prose follows.\n"
         ),
         "tests/fixtures/new.txt": b"synthetic fixture\n",
+    }
+
+    assert policy_violations(files) == sorted(files)
+
+
+def test_json_fixture_copy_and_byte_changes_require_exact_hash_approval() -> None:
+    approved_path = PurePosixPath("tests/fixtures/validate/review.json")
+    approved_content = (REPOSITORY_ROOT / approved_path).read_bytes()
+    files = {
+        str(approved_path): approved_content + b" ",
+        "tests/fixtures/validate/review-copy.json": approved_content,
     }
 
     assert policy_violations(files) == sorted(files)

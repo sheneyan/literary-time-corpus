@@ -4,9 +4,10 @@ import hashlib
 import re
 from typing import Any
 
+from literary_time_corpus.normalized import NORMALIZATION_VERSION
+
 
 CANDIDATE_SCHEMA_VERSION = "time-candidate-v1"
-NORMALIZATION_VERSION = "normalize-v1"
 EXTRACTION_VERSION = "extract-v1"
 TIME_PATTERN = re.compile(r"(?:[01][0-9]|2[0-3]):[0-5][0-9]")
 SHA256_PATTERN = re.compile(r"[0-9a-f]{64}")
@@ -111,12 +112,59 @@ def _valid_contextual_resolution(candidate: dict[str, Any]) -> bool:
     relative_end = evidence_end - excerpt_start
     try:
         excerpt_bytes = excerpt.encode("utf-8")
-        return (
+        evidence_matches_span = (
             excerpt_bytes[relative_start:relative_end].decode("utf-8") == evidence_text
             and len(evidence_text.encode("utf-8")) == evidence_end - evidence_start
         )
     except (UnicodeDecodeError, UnicodeEncodeError):
         return False
+    if not evidence_matches_span:
+        return False
+
+    matched_text = candidate.get("matchedText")
+    normalized_times = candidate.get("normalizedTimes")
+    if not isinstance(matched_text, str) or not isinstance(normalized_times, list):
+        return False
+    if method == "explicit-meridiem":
+        match = re.fullmatch(
+            r"((?:0?[1-9]|1[0-2])):([0-5][0-9])\s*([ap]\.?m\.?)",
+            matched_text,
+            re.IGNORECASE,
+        )
+        if match is None:
+            return False
+        expected_text = match.group(3)
+        expected_start = match_start + len(matched_text[: match.start(3)].encode("utf-8"))
+        hour = int(match.group(1)) % 12 + (12 if expected_text[0].lower() == "p" else 0)
+        return (
+            evidence_text == expected_text
+            and evidence_start == expected_start
+            and evidence_end == match_end
+            and normalized_times == [f"{hour:02d}:{int(match.group(2)):02d}"]
+        )
+    if method == "explicit-24-hour-clock":
+        match = re.fullmatch(r"([0-2][0-9]):([0-5][0-9])", matched_text)
+        if match is None:
+            return False
+        hour = int(match.group(1))
+        return (
+            hour <= 23
+            and (hour == 0 or hour >= 13 or match.group(1).startswith("0"))
+            and evidence_text == matched_text
+            and evidence_start == match_start
+            and evidence_end == match_end
+            and normalized_times == [matched_text]
+        )
+    if method == "named-time":
+        lowered = matched_text.lower()
+        return (
+            lowered in {"noon", "midnight"}
+            and evidence_text == matched_text
+            and evidence_start == match_start
+            and evidence_end == match_end
+            and normalized_times == (["12:00"] if lowered == "noon" else ["00:00"])
+        )
+    return False
 
 
 def candidate_record_violations(candidate: Any) -> list[str]:

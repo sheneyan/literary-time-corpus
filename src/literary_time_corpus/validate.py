@@ -11,13 +11,12 @@ from urllib.parse import urlsplit
 
 from literary_time_corpus.candidate import candidate_record_violations
 from literary_time_corpus.io import write_json_atomic
+from literary_time_corpus.normalized import normalized_record_violations
 
 
 RELEASE_SCHEMA_VERSION = "time-release-v1"
 RELEASE_VERSION = "release-v1"
 TARGET_USE_PROFILE = "zi5-public-corpus-v1"
-SHA256_PATTERN = re.compile(r"[0-9a-f]{64}")
-TIME_PATTERN = re.compile(r"(?:[01][0-9]|2[0-3]):[0-5][0-9]")
 UTC_TIMESTAMP_PATTERN = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z")
 DATE_PATTERN = re.compile(r"\d{4}-\d{2}-\d{2}")
 
@@ -177,24 +176,6 @@ def _snapshot_spans_match(
     )
 
 
-def _candidate_identity(candidate: dict[str, Any]) -> str | None:
-    source_id = _string(candidate.get("sourceId"))
-    analysis_hash = _string(candidate.get("analysisTextSha256"))
-    match_start = candidate.get("matchStartByte")
-    match_end = candidate.get("matchEndByte")
-    if (
-        source_id is None
-        or analysis_hash is None
-        or not isinstance(match_start, int)
-        or isinstance(match_start, bool)
-        or not isinstance(match_end, int)
-        or isinstance(match_end, bool)
-    ):
-        return None
-    identity = "\0".join((source_id, analysis_hash, str(match_start), str(match_end)))
-    return hashlib.sha256(identity.encode("utf-8")).hexdigest()
-
-
 def _confirmed_excerpt_matches(candidate: dict[str, Any], review: dict[str, Any]) -> bool:
     confirmed = review.get("confirmedExcerpt")
     if not isinstance(confirmed, dict):
@@ -265,30 +246,22 @@ def _collect_violations(
 ) -> list[str]:
     violations: list[str] = []
 
-    if candidate_record_violations(candidate):
+    candidate_violations = set(candidate_record_violations(candidate))
+    if candidate_violations:
         violations.append("invalid-candidate-document")
 
     analysis_text = _string(analysis.get("analysisText"))
-    carried_analysis_hash = _string(analysis.get("analysisTextSha256"))
-    actual_analysis_hash = (
-        hashlib.sha256(analysis_text.encode("utf-8")).hexdigest()
-        if analysis_text is not None
-        else None
-    )
-    if (
-        analysis.get("schemaVersion") != "normalized-source-v1"
-        or analysis_text is None
-        or carried_analysis_hash is None
-        or SHA256_PATTERN.fullmatch(carried_analysis_hash) is None
-        or carried_analysis_hash != actual_analysis_hash
-        or not _nonblank_string(analysis.get("sourceId"))
-        or not _nonblank_string(analysis.get("normalizationVersion"))
-        or SHA256_PATTERN.fullmatch(_string(analysis.get("sourceSha256")) or "") is None
-    ):
+    try:
+        actual_analysis_hash = (
+            hashlib.sha256(analysis_text.encode("utf-8")).hexdigest()
+            if analysis_text is not None
+            else None
+        )
+    except UnicodeEncodeError:
+        actual_analysis_hash = None
+    if normalized_record_violations(analysis):
         violations.append("invalid-analysis-document")
 
-    if candidate.get("schemaVersion") != "time-candidate-v1":
-        violations.append("invalid-candidate-document")
     if review.get("schemaVersion") != "time-review-v1":
         violations.append("invalid-review-document")
     if rights.get("schemaVersion") != "rights-decision-v1":
@@ -299,19 +272,13 @@ def _collect_violations(
     normalized_times = _string_list(candidate.get("normalizedTimes"))
     if normalized_times is None or len(normalized_times) != 1:
         violations.append("normalized-time-count")
-    elif TIME_PATTERN.fullmatch(normalized_times[0]) is None:
+    elif "invalid-normalizedTimes" in candidate_violations:
         violations.append("invalid-normalized-time")
 
-    excerpt = _string(candidate.get("excerpt"))
-    before = _string(candidate.get("quoteBefore"))
-    quote_time = _string(candidate.get("quoteTime"))
-    after = _string(candidate.get("quoteAfter"))
-    if (
-        None in (excerpt, before, quote_time, after)
-        or before + quote_time + after != excerpt
-    ):
+    if "invalid-text-segmentation" in candidate_violations:
         violations.append("quote-segmentation-inconsistent")
-    if quote_time is None or quote_time != candidate.get("matchedText"):
+        violations.append("source-span-mismatch")
+    if "offset-text-mismatch" in candidate_violations:
         violations.append("source-span-mismatch")
 
     if candidate.get("analysisTextSha256") != actual_analysis_hash:
@@ -330,18 +297,11 @@ def _collect_violations(
             violations.append("invalid-offsets")
             violations.append("source-span-mismatch")
 
-    source_hash = _string(candidate.get("sourceSha256"))
-    analysis_hash = _string(candidate.get("analysisTextSha256"))
-    if (
-        source_hash is None
-        or SHA256_PATTERN.fullmatch(source_hash) is None
-        or analysis_hash is None
-        or SHA256_PATTERN.fullmatch(analysis_hash) is None
-    ):
+    if candidate_violations & {"invalid-sourceSha256", "invalid-analysisTextSha256"}:
         violations.append("invalid-hash")
-    if _offsets(candidate) is None:
+    if candidate_violations & {"invalid-offsets", "offset-text-mismatch"}:
         violations.append("invalid-offsets")
-    if candidate.get("candidateId") != _candidate_identity(candidate):
+    if "candidate-identity-mismatch" in candidate_violations:
         violations.append("candidate-identity-mismatch")
 
     candidate_id = candidate.get("candidateId")
@@ -364,7 +324,7 @@ def _collect_violations(
     if not _confirmed_excerpt_matches(candidate, review):
         violations.append("review-confirmed-excerpt-mismatch")
 
-    candidate_warnings = _nonblank_string_list(candidate.get("warningReasonCodes"))
+    candidate_warnings = candidate.get("warningReasonCodes")
     review_warnings = _nonblank_string_list(review.get("unresolvedWarningReasonCodes"))
     if candidate_warnings or review_warnings:
         violations.append("unresolved-warnings")
@@ -383,24 +343,6 @@ def _collect_violations(
     if not _valid_date(rights.get("decisionDate")):
         violations.append("invalid-rights-date")
 
-    required_candidate_strings = (
-        "candidateId",
-        "sourceId",
-        "normalizationVersion",
-        "extractionVersion",
-        "matchedText",
-    )
-    candidate_reason_fields = (
-        _nonblank_string_list(candidate.get("exclusionReasonCodes")),
-        candidate_warnings,
-    )
-    if (
-        any(not _nonblank_string(candidate.get(field)) for field in required_candidate_strings)
-        or candidate.get("status")
-        not in {"detected", "awaiting-review", "reviewed", "automatically-excluded"}
-        or any(values is None for values in candidate_reason_fields)
-    ):
-        violations.append("invalid-candidate-document")
     required_review_strings = ("reviewId", "reviewer", "reviewedAt")
     review_reason_fields = (
         _nonblank_string_list(review.get("reasonCodes")),

@@ -194,6 +194,13 @@ decision, policy/profile, and version fields into the release record. Never
 silently repair inputs. Collect deterministic reason codes in
 `error.details.violations` so reviewers can act on all observed failures.
 
+The implemented hardening uses one normalized-record validator in both
+`extract` and `validate`, and one complete candidate validator in both `report`
+and `validate`. Release validation consumes those results instead of
+reimplementing record-shape, hash, version, segmentation, or identity checks;
+it adds only snapshot linkage, review/rights, provenance, and release-specific
+invariants.
+
 **Step 3: Verify and commit**
 
 Run:

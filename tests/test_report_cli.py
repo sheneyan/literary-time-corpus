@@ -7,7 +7,7 @@ import pytest
 
 
 FIXTURE = Path(__file__).parent / "fixtures" / "report" / "candidates.jsonl"
-FIXTURE_SHA256 = "0a1e9c8b86585d6bbeddabd40df7d58e484d35e90f91706c6a0eb2afe934ab3b"
+FIXTURE_SHA256 = "c1c4834297224e14b253c1ca913d9b31093a791e419368dddacb015146edbecb"
 
 
 def first_candidate() -> dict[str, object]:
@@ -66,7 +66,7 @@ def test_report_summarizes_candidate_jsonl_deterministically(run_ltc, tmp_path: 
             "reviewed": 1,
         },
         "topDuplicateMinutes": [
-            {"candidateCount": 2, "minute": "01:17"},
+            {"candidateCount": 2, "minute": "12:00"},
             {"candidateCount": 2, "minute": "13:15"},
         ],
         "uniqueResolvedMinutes": ["01:17", "12:00", "13:15"],
@@ -185,6 +185,28 @@ def test_report_rejects_invalid_candidate_shape_without_output(run_ltc, tmp_path
     output = tmp_path / "report.json"
 
     result = run_ltc("report", "--input", invalid, "--output", output)
+
+    assert result.returncode == 2
+    assert json.loads(result.stderr)["error"]["code"] == "invalid-candidate-jsonl"
+    assert not output.exists()
+
+
+@pytest.mark.parametrize("rule_family", ["numeric-24-hour", "named-time"])
+def test_report_rejects_coherent_partial_resolution_evidence_spoof(
+    run_ltc, tmp_path: Path, rule_family: str
+) -> None:
+    candidates = [
+        json.loads(line) for line in FIXTURE.read_text(encoding="utf-8").splitlines()
+    ]
+    candidate = next(row for row in candidates if row["ruleFamily"] == rule_family)
+    resolution = candidate["contextualResolution"]
+    resolution["evidenceText"] = resolution["evidenceText"][:-1]
+    resolution["evidenceEndByte"] -= 1
+    input_path = tmp_path / "spoof.jsonl"
+    write_candidate(input_path, candidate)
+    output = tmp_path / "report.json"
+
+    result = run_ltc("report", "--input", input_path, "--output", output)
 
     assert result.returncode == 2
     assert json.loads(result.stderr)["error"]["code"] == "invalid-candidate-jsonl"

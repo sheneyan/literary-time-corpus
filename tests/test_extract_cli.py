@@ -306,3 +306,27 @@ def test_extract_rejects_source_hash_inconsistent_with_source_identity(run_ltc, 
         }
     }
     assert not output.exists()
+
+
+def test_extract_requires_complete_exact_normalized_record(run_ltc, tmp_path: Path) -> None:
+    mutations = [
+        lambda document: document.pop("transformationLog"),
+        lambda document: document.update(normalizationVersion="normalize-v999"),
+        lambda document: document["transformationLog"][0].update(outputEndByte=1),
+        lambda document: document.update(bodyEndByte=document["bodyEndByte"] + 1),
+    ]
+
+    for index, mutate in enumerate(mutations):
+        case_dir = tmp_path / str(index)
+        case_dir.mkdir()
+        normalized = normalized_fixture(run_ltc, case_dir)
+        document = json.loads(normalized.read_text(encoding="utf-8"))
+        mutate(document)
+        normalized.write_text(json.dumps(document), encoding="utf-8")
+        output = tmp_path / f"candidates-{index}.jsonl"
+
+        result = run_ltc("extract", "--input", normalized, "--output", output)
+
+        assert result.returncode == 2
+        assert json.loads(result.stderr)["error"]["code"] == "invalid-normalized-source"
+        assert not output.exists()

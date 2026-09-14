@@ -150,6 +150,33 @@ def test_validate_detects_same_length_analysis_tampering(run_ltc, tmp_path: Path
     assert "source-span-mismatch" in violations
 
 
+@pytest.mark.parametrize(
+    ("path", "value"),
+    [
+        ("transformationLog", "missing"),
+        ("normalizationVersion", "normalize-v999"),
+        ("transformationLog.0.outputEndByte", 1),
+        ("bodyEndByte", 138),
+    ],
+)
+def test_validate_requires_complete_exact_normalized_analysis_record(
+    run_ltc, tmp_path: Path, path: str, value: Any
+) -> None:
+    def mutate(document: dict[str, Any]) -> None:
+        if path == "transformationLog" and value == "missing":
+            document.pop(path)
+        else:
+            set_path(document, path, value)
+
+    analysis = mutate_fixture("analysis.json", mutate)
+
+    result, output = run_validate(run_ltc, tmp_path, analysis=analysis)
+
+    assert result.returncode == 2
+    assert not output.exists()
+    assert "invalid-analysis-document" in stderr_error(result)["details"]["violations"]
+
+
 def set_path(document: dict[str, Any], path: str, value: Any) -> None:
     parent: Any = document
     parts = path.split(".")
@@ -266,6 +293,24 @@ def test_validate_reuses_complete_candidate_shape_validation(
     candidate = mutate_fixture(
         "candidate.json", lambda document: set_path(document, path, value)
     )
+
+    result, output = run_validate(run_ltc, tmp_path, candidate=candidate)
+
+    assert result.returncode == 2
+    assert not output.exists()
+    assert "invalid-candidate-document" in stderr_error(result)["details"]["violations"]
+
+
+def test_validate_rejects_coherent_non_meridiem_evidence_spoof(
+    run_ltc, tmp_path: Path
+) -> None:
+    candidate = load_fixture("candidate.json")
+    candidate["contextualResolution"] = {
+        "evidenceEndByte": 122,
+        "evidenceStartByte": 118,
+        "evidenceText": "1:17",
+        "method": "explicit-meridiem",
+    }
 
     result, output = run_validate(run_ltc, tmp_path, candidate=candidate)
 
