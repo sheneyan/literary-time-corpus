@@ -143,6 +143,23 @@ def test_scan_output_is_ignored_and_never_approved_for_tracking() -> None:
     ]
 
 
+def test_public_documentation_matches_local_scanner_path_and_identity_contract() -> None:
+    readme = (REPOSITORY_ROOT / "README.md").read_text(encoding="utf-8")
+    data_model = (REPOSITORY_ROOT / "docs/data-model.md").read_text(
+        encoding="utf-8"
+    )
+
+    assert "--output scans/book" not in readme
+    assert "ltc scan book.txt --output book-scan" in readme
+    assert "The output parent directory must already exist" in readme
+    assert (
+        "`local_<first 12 lowercase hexadecimal characters of sourceSha256>`"
+        in data_model
+    )
+    assert "synthetic `sourceId`" not in data_model
+    assert "### Future Project Gutenberg source snapshot" in data_model
+
+
 def test_tracked_repository_content_satisfies_boundary_policy() -> None:
     violations = policy_violations(tracked_index_files())
 

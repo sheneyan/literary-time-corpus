@@ -50,8 +50,12 @@ decodes it strictly as UTF-8, and works without a network connection or a
 provider-specific format:
 
 ```bash
-ltc scan book.txt --output scans/book
+ltc scan book.txt --output book-scan
 ```
+
+The output parent directory must already exist. Scan creates only the final
+output directory (`book-scan` here), after all five staged artifacts pass
+verification.
 
 Version 1 is deliberately TXT-only. It does not detect other encodings, run
 OCR, convert EPUB or PDF, search or download from Project Gutenberg, or expose
@@ -62,7 +66,7 @@ Add descriptive metadata when it is known:
 
 ```bash
 ltc scan book.txt \
-  --output scans/book \
+  --output book-scan \
   --title "Example Book" \
   --author "Example Author" \
   --source-url "https://example.org/book"
@@ -77,7 +81,7 @@ occur exactly once and the start must precede the end:
 
 ```bash
 ltc scan book.txt \
-  --output scans/book \
+  --output book-scan \
   --start-marker "CHAPTER I" \
   --end-marker "APPENDIX"
 ```
@@ -86,7 +90,7 @@ An existing output directory is preserved by default. `--force` authorizes
 replacement of that exact directory only:
 
 ```bash
-ltc scan book.txt --output scans/book --force
+ltc scan book.txt --output book-scan --force
 ```
 
 Forced replacement is supported only when the platform provides the anchored
@@ -101,7 +105,7 @@ replacement primitives.
 A successful scan creates exactly five files:
 
 ```text
-scans/book/
+book-scan/
 ├── normalized.json
 ├── candidates.jsonl
 ├── report.json
@@ -137,7 +141,7 @@ locked development environment and prefix commands with `uv run`:
 
 ```bash
 uv sync --locked
-uv run ltc scan book.txt --output scans/book
+uv run ltc scan book.txt --output book-scan
 ```
 
 To install the current wheel in another environment:
@@ -145,7 +149,7 @@ To install the current wheel in another environment:
 ```bash
 uv build --wheel
 python3 -m pip install dist/literary_time_corpus-0.1.0-py3-none-any.whl
-ltc scan book.txt --output scans/book
+ltc scan book.txt --output book-scan
 ```
 
 If a release is published to PyPI in the future, installation can use

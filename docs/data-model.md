@@ -202,7 +202,17 @@ Required semantics:
 `workId` is an opaque identifier assigned once. It must not be regenerated from
 a title or author spelling that may later be corrected.
 
-### Source snapshot
+### Local scanner source identity
+
+The current normalized-source validator accepts only the deterministic,
+provider-neutral local scanner form
+`local_<first 12 lowercase hexadecimal characters of sourceSha256>`. The
+lowercase 64-character `sourceSha256` hashes the untouched input bytes. This
+identifier binds local analysis to those bytes; it is not provider provenance,
+an acquisition record, or rights approval. The current validator does not
+accept a `pg_` identity.
+
+### Future Project Gutenberg source snapshot
 
 One exact acquired file used for analysis.
 
@@ -220,7 +230,8 @@ Required semantics:
   untouched decoded source, when a direct mapping is possible; and
 - references to the captured provider metadata and rights evidence.
 
-`sourceId` has the deterministic form
+For a future approved Project Gutenberg acquisition record, `sourceId` has the
+planned deterministic form
 `pg_<itemId>_<first-12-source-sha256-hex-digits>`.
 
 The exact acquisition URL is internal provenance because hosted file paths may
@@ -287,7 +298,7 @@ candidate validator before writing JSONL. A zero hour is canonical only as
 The Gate 2 candidate also emits
 `sourceHashStatus="carried-from-normalization"`. This means extraction checked
 the normalized document's analysis-text hash and the consistency of its
-synthetic `sourceId` with the carried `sourceSha256`; it did **not** have the
+local `sourceId` with the carried `sourceSha256`; it did **not** have the
 untouched source bytes available to recompute that source hash. Release
 validation likewise verifies candidates against the supplied normalized
 analysis snapshot, not against a downloaded ebook. Real-source acquisition
