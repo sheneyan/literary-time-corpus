@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import hashlib
+import os
+import stat
 from pathlib import Path
 from typing import Any
 
@@ -120,8 +122,19 @@ def normalize_file(
     end_marker: str | None = None,
 ) -> None:
     try:
-        source = input_path.read_bytes()
+        descriptor = os.open(input_path, os.O_RDONLY | os.O_NONBLOCK)
     except OSError as error:
         raise NormalizationError("input-error", "could not read source") from error
+    try:
+        if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+            raise NormalizationError(
+                "input-error", "source must be a regular file"
+            )
+        with os.fdopen(descriptor, "rb", closefd=False) as source_file:
+            source = source_file.read()
+    except OSError as error:
+        raise NormalizationError("input-error", "could not read source") from error
+    finally:
+        os.close(descriptor)
     document = normalize_bytes(source, start_marker=start_marker, end_marker=end_marker)
     write_json_atomic(output_path, document)

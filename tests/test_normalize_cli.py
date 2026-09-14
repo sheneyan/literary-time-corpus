@@ -3,9 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-import stat
 import subprocess
-import threading
 from pathlib import Path
 
 import pytest
@@ -359,63 +357,75 @@ def test_normalize_rejects_symlink_output_without_mutating_link_or_target(
     assert target.read_text(encoding="utf-8") == "target must survive"
 
 
-def test_normalize_replaces_output_symlink_swapped_after_path_validation(
+def test_normalize_rejects_fifo_input_promptly_and_preserves_output(
     project_root: Path, tmp_path: Path
 ) -> None:
     source = tmp_path / "source.pipe"
     os.mkfifo(source)
-    victim = tmp_path / "victim.json"
-    victim.write_bytes(b"victim must survive\n")
     output = tmp_path / "normalized.json"
-    reader_open = threading.Event()
-    release_source = threading.Event()
+    prior_output = b"keep this exact output\n"
+    output.write_bytes(prior_output)
 
-    def feed_source() -> None:
-        descriptor = os.open(source, os.O_WRONLY)
-        try:
-            reader_open.set()
-            assert release_source.wait(timeout=10)
-            os.write(descriptor, (FIXTURES / "valid.txt").read_bytes())
-        finally:
-            os.close(descriptor)
-
-    feeder = threading.Thread(target=feed_source)
-    feeder.start()
-    process = subprocess.Popen(
-        [
-            "uv",
-            "run",
-            "ltc",
-            "normalize",
-            "--input",
-            str(source),
-            "--output",
-            str(output),
-        ],
-        cwd=project_root,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-    )
     try:
-        assert reader_open.wait(timeout=10), "ltc did not open the coordinated input"
-        output.symlink_to(victim)
-        release_source.set()
-        _stdout, stderr = process.communicate(timeout=10)
-    finally:
-        release_source.set()
-        feeder.join(timeout=10)
-        if process.poll() is None:
-            process.kill()
-            process.wait(timeout=10)
+        result = subprocess.run(
+            [
+                "uv",
+                "run",
+                "ltc",
+                "normalize",
+                "--input",
+                str(source),
+                "--output",
+                str(output),
+            ],
+            cwd=project_root,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=3,
+        )
+    except subprocess.TimeoutExpired:
+        pytest.fail("ltc normalize blocked while opening a FIFO input")
 
-    assert process.returncode == 0, stderr
-    assert not output.is_symlink()
-    assert json.loads(output.read_text(encoding="utf-8"))["schemaVersion"] == (
-        "normalized-source-v1"
+    assert result.returncode == 2
+    assert parse_error(result.stderr)["error"] == {
+        "code": "input-error",
+        "message": "source must be a regular file",
+    }
+    assert output.read_bytes() == prior_output
+
+
+def test_normalize_accepts_input_symlink_to_regular_file(
+    run_ltc, tmp_path: Path
+) -> None:
+    target = tmp_path / "target.txt"
+    target.write_text("At 13:15 the bell rang.\n", encoding="utf-8")
+    source = tmp_path / "source.txt"
+    source.symlink_to(target)
+    output = tmp_path / "normalized.json"
+
+    result = run_ltc("normalize", "--input", source, "--output", output)
+
+    assert result.returncode == 0, result.stderr
+    assert json.loads(output.read_text(encoding="utf-8"))["analysisText"] == (
+        target.read_text(encoding="utf-8")
     )
-    assert victim.read_bytes() == b"victim must survive\n"
-    assert stat.S_ISFIFO(source.lstat().st_mode)
+
+
+def test_normalize_rejects_input_symlink_loop_and_preserves_output(
+    run_ltc, tmp_path: Path
+) -> None:
+    source = tmp_path / "source.txt"
+    source.symlink_to(source.name)
+    output = tmp_path / "normalized.json"
+    prior_output = b"keep this exact output\n"
+    output.write_bytes(prior_output)
+
+    result = run_ltc("normalize", "--input", source, "--output", output)
+
+    assert result.returncode == 2
+    assert parse_error(result.stderr)["error"]["code"] == "invalid-input-path"
+    assert output.read_bytes() == prior_output
 
 
 def test_normalize_preserves_domain_error_and_directory_output(
@@ -453,7 +463,7 @@ def test_normalize_rejects_directory_input_without_leaking_path(
     assert result.returncode == 2
     assert parse_error(result.stderr)["error"] == {
         "code": "input-error",
-        "message": "could not read source",
+        "message": "source must be a regular file",
     }
     assert "private-source-name" not in result.stderr
     assert not output.exists()
