@@ -71,6 +71,13 @@ def write_error(
 
 
 def validate_normalize_paths(input_path: Path, output_path: Path) -> None:
+    try:
+        resolved_input = input_path.resolve(strict=False)
+    except (OSError, RuntimeError) as error:
+        raise CommandError(
+            "invalid-input-path", "could not resolve input path"
+        ) from error
+
     if output_path.is_symlink():
         raise CommandError(
             "unsafe-output-path", "output path must not be a symbolic link"
@@ -84,7 +91,7 @@ def validate_normalize_paths(input_path: Path, output_path: Path) -> None:
     try:
         paths_are_same = input_path.samefile(output_path)
     except OSError:
-        paths_are_same = input_path.resolve(strict=False) == resolved_output
+        paths_are_same = resolved_input == resolved_output
     if paths_are_same:
         raise CommandError(
             "unsafe-output-path", "input and output must refer to different files"

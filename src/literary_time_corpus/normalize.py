@@ -9,6 +9,7 @@ from literary_time_corpus.normalized import (
     NORMALIZATION_VERSION,
     NORMALIZED_SCHEMA_VERSION,
     TRANSFORMATION_METHOD,
+    normalized_record_violations,
 )
 
 
@@ -68,6 +69,10 @@ def normalize_file(input_path: Path, output_path: Path) -> None:
         body_end -= 1
 
     analysis = source[body_start:body_end]
+    if not analysis.decode("utf-8").strip():
+        raise NormalizationError(
+            "empty-body", "source body must contain non-whitespace text"
+        )
     source_hash = hashlib.sha256(source).hexdigest()
     document = {
         "analysisText": analysis.decode("utf-8"),
@@ -88,4 +93,8 @@ def normalize_file(input_path: Path, output_path: Path) -> None:
             }
         ],
     }
+    if normalized_record_violations(document):
+        raise NormalizationError(
+            "normalization-failed", "generated normalized record failed validation"
+        )
     write_json_atomic(output_path, document)

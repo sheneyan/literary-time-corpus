@@ -94,6 +94,8 @@ It accepts only `schemaVersion=normalized-source-v1` with
 source-ID/hash relationship; and requires nonempty, internally consistent body
 bounds plus the exact one-entry transformation log described above. Missing,
 extra, or inconsistent transformation fields fail closed.
+The normalizer runs this validator against its own generated record before any
+atomic write and rejects marker bodies that contain only Unicode whitespace.
 
 ### Candidate match
 
@@ -126,6 +128,9 @@ the complete AM/PM suffix token (including its original punctuation),
 meridiem, and `named-time` selects exactly the original `noon` or `midnight`
 token. Each method must agree with the normalized minute produced from that
 matched text; a smaller but internally consistent evidence span is invalid.
+Likewise, extraction validates every generated candidate with the shared
+candidate validator before writing JSONL. A zero hour is canonical only as
+`00:MM`; forms such as `0:07` are not emitted as 24-hour candidates.
 
 The Gate 2 candidate also emits
 `sourceHashStatus="carried-from-normalization"`. This means extraction checked
@@ -262,10 +267,9 @@ That repository check is now implemented for the current Gate 2 boundary. It
 examines the tracked Git index without requiring a clean worktree and applies
 these conventions:
 
-- binary ebook, document, HTML, and archive extensions are rejected throughout
-  the repository;
-- likely raw-text extensions such as `.txt`, `.text`, `.utf8`, and `.utf-8` are
-  rejected throughout the repository;
+- only the exact approved root project files, `docs/**/*.md`, `src/**/*.py`,
+  `tests/**/*.py`, the hash-pinned fixture inventory, and exact reserved-root
+  placeholders are accepted;
 - every file under `tests/fixtures/`, including JSON and JSONL, is approved only
   by its exact repository path and SHA-256 rather than by extension or a
   self-attested `synthetic` label; a copied path or one-byte change fails;
@@ -303,3 +307,7 @@ any corpus package is committed. Changing a synthetic fixture's path or any
 byte of its contents also fails repository policy until a reviewer verifies
 that it remains fully synthetic and deliberately updates the fixture SHA-256
 allowlist.
+
+Any new top-level file, directory, source extension, generated format, or test
+fixture therefore requires an explicit reviewed allowlist update. The policy
+does not guess safety from content, filename, or an unfamiliar extension.

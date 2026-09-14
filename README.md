@@ -84,6 +84,8 @@ Both write exactly one JSON error object to stderr with `error.code`,
 or modify its requested output path. Output destinations whose parent is
 missing, is not a directory, or otherwise cannot be opened safely return exit
 `2` with `error.code=invalid-output-path`.
+Inputs whose paths cannot be resolved safely, including symlink loops, return
+exit `2` with `error.code=invalid-input-path` before any output is changed.
 
 Gate 2 keeps `manifests/`, `artifacts/`, and `releases/` closed by default. The
 repository policy permits only exact empty `.gitkeep` files or fixed root

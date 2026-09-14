@@ -7,29 +7,14 @@ from typing import Mapping
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
-EBOOK_OR_ARCHIVE_SUFFIXES = {
-    ".7z",
-    ".azw",
-    ".azw3",
-    ".bz2",
-    ".djvu",
-    ".doc",
-    ".docx",
-    ".epub",
-    ".fb2",
-    ".gz",
-    ".htm",
-    ".html",
-    ".mobi",
-    ".odt",
-    ".pdf",
-    ".rar",
-    ".rtf",
-    ".tar",
-    ".xz",
-    ".zip",
+ALLOWED_ROOT_FILES = {
+    PurePosixPath(".gitignore"),
+    PurePosixPath("DATA_RIGHTS.md"),
+    PurePosixPath("LICENSE"),
+    PurePosixPath("README.md"),
+    PurePosixPath("pyproject.toml"),
+    PurePosixPath("uv.lock"),
 }
-RAW_TEXT_SUFFIXES = {".text", ".txt", ".utf-8", ".utf8"}
 ALLOWED_DATA_ROOT_PLACEHOLDER_BYTES = {
     PurePosixPath("manifests/.gitkeep"): b"",
     PurePosixPath("manifests/README.md"): (
@@ -120,11 +105,15 @@ def policy_violations(files: Mapping[str, bytes]) -> list[str]:
             if expected_placeholder is None or content != expected_placeholder:
                 violations.append(raw_path)
             continue
-        if path.suffix.lower() in EBOOK_OR_ARCHIVE_SUFFIXES:
-            violations.append(raw_path)
+        if path in ALLOWED_ROOT_FILES:
             continue
-        if path.suffix.lower() in RAW_TEXT_SUFFIXES:
-            violations.append(raw_path)
+        if path.parts[:1] == ("docs",) and path.suffix == ".md":
+            continue
+        if path.parts[:1] == ("src",) and path.suffix == ".py":
+            continue
+        if path.parts[:1] == ("tests",) and path.suffix == ".py":
+            continue
+        violations.append(raw_path)
     return sorted(violations)
 
 
@@ -184,6 +173,16 @@ def test_ebook_and_raw_text_rules_cannot_be_bypassed_by_directory() -> None:
         "sources/book.zip": b"archive",
         "sources/book.utf8": b"plain ebook text",
         "assets/book.html": b"<p>ebook text</p>",
+    }
+
+    assert policy_violations(files) == sorted(files)
+
+
+def test_unknown_tracked_paths_are_denied_even_without_known_content_suffixes() -> None:
+    files = {
+        "data/book.json": b'{"hidden":"payload"}\n',
+        "sources/book": b"extensionless payload\n",
+        "unexpected.yaml": b"payload: true\n",
     }
 
     assert policy_violations(files) == sorted(files)

@@ -124,6 +124,27 @@ def test_normalize_rejects_missing_start_marker(run_ltc, tmp_path: Path) -> None
     assert not output.exists()
 
 
+def test_normalize_rejects_effectively_empty_marker_body(run_ltc, tmp_path: Path) -> None:
+    source = tmp_path / "empty.txt"
+    source.write_text(
+        "Synthetic metadata\n"
+        "*** START OF THE PROJECT GUTENBERG EBOOK EMPTY ***\n"
+        " \t\n"
+        "*** END OF THE PROJECT GUTENBERG EBOOK EMPTY ***\n",
+        encoding="utf-8",
+    )
+    output = tmp_path / "normalized.json"
+
+    result = run_ltc("normalize", "--input", source, "--output", output)
+
+    assert result.returncode == 2
+    assert parse_error(result.stderr)["error"] == {
+        "code": "empty-body",
+        "message": "source body must contain non-whitespace text",
+    }
+    assert not output.exists()
+
+
 def test_normalize_preserves_preexisting_output_when_input_is_invalid(
     run_ltc, tmp_path: Path
 ) -> None:

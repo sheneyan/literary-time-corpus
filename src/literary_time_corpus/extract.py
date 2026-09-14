@@ -6,6 +6,7 @@ import re
 from pathlib import Path
 from typing import Any, Callable
 
+from literary_time_corpus.candidate import candidate_record_violations
 from literary_time_corpus.io import write_jsonl_atomic
 from literary_time_corpus.normalized import normalized_record_violations
 
@@ -321,7 +322,7 @@ def extract_candidates(document: dict[str, Any]) -> list[dict[str, Any]]:
     )
 
     numeric_bare = re.compile(
-        r"(?<![\w$€£¥])([01]?[0-9]|2[0-3]):([0-5][0-9])(?![0-9])"
+        r"(?<![\w$€£¥])([1-9]|1[0-9]|2[0-3]|0[0-9]):([0-5][0-9])(?![0-9])"
     )
 
     def build_bare(match: re.Match[str]) -> dict[str, Any] | None:
@@ -394,4 +395,10 @@ def extract_candidates(document: dict[str, Any]) -> list[dict[str, Any]]:
 
 def extract_file(input_path: Path, output_path: Path) -> None:
     document = _read_normalized(input_path)
-    write_jsonl_atomic(output_path, extract_candidates(document))
+    candidates = extract_candidates(document)
+    if any(candidate_record_violations(candidate) for candidate in candidates):
+        raise ExtractionError(
+            "candidate-generation-failed",
+            "generated candidate failed validation",
+        )
+    write_jsonl_atomic(output_path, candidates)

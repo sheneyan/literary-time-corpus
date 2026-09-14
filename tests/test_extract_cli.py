@@ -171,6 +171,31 @@ def test_extract_supports_zero_padded_24_hour_times(run_ltc, tmp_path: Path) -> 
     assert midnight["ruleFamily"] == "numeric-24-hour"
 
 
+def test_extract_rejects_noncanonical_single_digit_zero_hour_end_to_end(
+    run_ltc, tmp_path: Path
+) -> None:
+    source = tmp_path / "zero-hour.txt"
+    source.write_text(
+        "Synthetic metadata\n"
+        "*** START OF THE PROJECT GUTENBERG EBOOK ZERO HOUR ***\n"
+        "At 0:07 the false clock appeared; at 00:07 the canonical clock remained.\n"
+        "*** END OF THE PROJECT GUTENBERG EBOOK ZERO HOUR ***\n",
+        encoding="utf-8",
+    )
+    normalized = tmp_path / "normalized.json"
+    candidates = tmp_path / "candidates.jsonl"
+    report = tmp_path / "report.json"
+
+    assert run_ltc("normalize", "--input", source, "--output", normalized).returncode == 0
+    result = run_ltc("extract", "--input", normalized, "--output", candidates)
+
+    assert result.returncode == 0, result.stderr
+    rows = [json.loads(line) for line in candidates.read_text().splitlines()]
+    assert [row["matchedText"] for row in rows] == ["00:07"]
+    report_result = run_ltc("report", "--input", candidates, "--output", report)
+    assert report_result.returncode == 0, report_result.stderr
+
+
 def test_extract_keeps_narrative_title_case_time_introducers(run_ltc, tmp_path: Path) -> None:
     _document, rows, _output = extract_fixture(run_ltc, tmp_path)
 

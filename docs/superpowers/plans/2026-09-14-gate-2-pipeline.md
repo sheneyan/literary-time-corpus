@@ -67,6 +67,10 @@ Set `sourceId` to `synthetic_<first 12 source hash hex digits>`. Write canonical
 UTF-8 JSON with sorted keys, compact separators, and a trailing newline through
 an atomic temporary-file replacement.
 
+Reject a retained body containing only Unicode whitespace, then validate the
+complete generated normalized record through the shared validator before
+writing it.
+
 **Step 3: Verify and commit**
 
 Run:
@@ -131,6 +135,10 @@ times therefore remain `exact-minute-ambiguous` with both possible HH:MM values.
 Approximation markers produce `approximate`. False-positive patterns may either
 be omitted or emitted as `automatically-excluded`, but tests require that none
 is releaseable.
+
+Require canonical `00:MM` for a zero-hour 24-hour expression; do not emit
+single-digit `0:MM`. Validate every generated candidate with the shared
+candidate validator before writing any JSONL output.
 
 **Step 3: Verify and commit**
 
