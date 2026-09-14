@@ -43,17 +43,131 @@ subject to the gates in the pilot design and rights policy.
 See the [project brief](docs/project-brief.md) for the confirmed scope, data
 semantics, evaluation requirements, and publication gates.
 
-## Local synthetic pipeline
+## Scan a local TXT file
 
-Python 3.11 or newer and [uv](https://docs.astral.sh/uv/) are required. Install
-the project and its development environment from the lockfile:
+`ltc scan` is the primary workflow. It accepts one local plain-text file,
+decodes it strictly as UTF-8, and works without a network connection or a
+provider-specific format:
 
 ```bash
-uv sync
+ltc scan book.txt --output scans/book
 ```
 
-The installed `ltc` command exposes four offline operations. These examples use
-only the repository's synthetic fixtures:
+Version 1 is deliberately TXT-only. It does not detect other encodings, run
+OCR, convert EPUB or PDF, search or download from Project Gutenberg, or expose
+a `Provider` or converter API. Gutenberg is one possible upstream source, not
+a dependency of the scanner.
+
+Add descriptive metadata when it is known:
+
+```bash
+ltc scan book.txt \
+  --output scans/book \
+  --title "Example Book" \
+  --author "Example Author" \
+  --source-url "https://example.org/book"
+```
+
+Metadata is copied into the run and candidate records; `--source-url` is never
+fetched and is not rights evidence. Without `--title` and `--author`, scanning
+still succeeds for analysis, but `metadata.metadataComplete` is `false`.
+
+To exclude literal front and back matter, supply both markers. Each marker must
+occur exactly once and the start must precede the end:
+
+```bash
+ltc scan book.txt \
+  --output scans/book \
+  --start-marker "CHAPTER I" \
+  --end-marker "APPENDIX"
+```
+
+An existing output directory is preserved by default. `--force` authorizes
+replacement of that exact directory only:
+
+```bash
+ltc scan book.txt --output scans/book --force
+```
+
+Forced replacement is supported only when the platform provides the anchored
+open, stat, private-directory creation, and no-replace rename primitives used
+by the safe transaction. Otherwise the command fails before staging with
+`error.code=unsupported-safe-replacement` and leaves the existing directory
+unchanged. Creating a previously absent output does not require those forced-
+replacement primitives.
+
+### Outputs and scripting contract
+
+A successful scan creates exactly five files:
+
+```text
+scans/book/
+├── normalized.json
+├── candidates.jsonl
+├── report.json
+├── review.md
+└── run.json
+```
+
+- `normalized.json` contains the complete retained source body in
+  `analysisText` (the whole file unless markers select a body).
+- `candidates.jsonl` contains machine-readable observations and unchanged,
+  bounded source context; `review.md` renders those contexts for a person.
+- `report.json` contains aggregate extraction metrics, while `run.json` binds
+  input hashes, options, versions, metadata, counts, and artifact hashes. These
+  two do not contain the full source body or extracted context.
+
+The five files are deterministic for identical input bytes, basename, options,
+metadata, and tool versions. Scan outputs can contain copyrighted text, so
+`scans/` is ignored and must not be committed.
+
+Success exits `0`, writes no stderr, and writes exactly one compact JSON object
+to stdout with `status`, `outputName`, `candidateCount`, and
+`resolvedMinuteCount`. Expected input, output, or invariant failures exit `2`;
+unexpected internal failures exit `1`. A failure writes exactly one JSON object
+to stderr with `error.code`, `error.message`, and optional `error.details`, and
+does not report success. If failed work is safely quarantined for inspection,
+details expose only its basename through `retainedPathBasename`, never an
+absolute path or source text.
+
+### Installation
+
+Python 3.11 or newer is required. For the current source checkout, install the
+locked development environment and prefix commands with `uv run`:
+
+```bash
+uv sync --locked
+uv run ltc scan book.txt --output scans/book
+```
+
+To install the current wheel in another environment:
+
+```bash
+uv build --wheel
+python3 -m pip install dist/literary_time_corpus-0.1.0-py3-none-any.whl
+ltc scan book.txt --output scans/book
+```
+
+If a release is published to PyPI in the future, installation can use
+`python3 -m pip install literary-time-corpus`. The project does not currently
+claim that a PyPI package is available.
+
+### Analysis is not release approval
+
+Scanning creates analysis and a Markdown review aid. `review.md` is not a
+formal review record, and candidates are not automatically public-domain or
+publishable. The user is responsible for permission to process the input.
+Release still requires append-only human review plus the separate United States
+and China-mainland rights decision enforced by `ltc validate`.
+
+The MIT license covers only project-authored software and documentation. It
+does not license user-supplied books, third-party editions, scan outputs,
+excerpts, provider names, or a future dataset. See [DATA_RIGHTS.md](DATA_RIGHTS.md).
+
+### Advanced commands
+
+The same offline modules remain available as four composable commands. These
+examples use repository-owned synthetic fixtures:
 
 ```bash
 uv run ltc normalize \
@@ -64,53 +178,43 @@ uv run ltc extract \
   --input /tmp/ltc-normalized.json \
   --output /tmp/ltc-candidates.jsonl
 
+uv run ltc report \
+  --input tests/fixtures/report/candidates.jsonl \
+  --output /tmp/ltc-report.json
+
 uv run ltc validate \
   --analysis tests/fixtures/validate/analysis.json \
   --candidate tests/fixtures/validate/candidate.json \
   --review tests/fixtures/validate/review.json \
   --rights tests/fixtures/validate/rights.json \
   --output /tmp/ltc-release.json
-
-uv run ltc report \
-  --input tests/fixtures/report/candidates.jsonl \
-  --output /tmp/ltc-report.json
 ```
 
-`normalize`, `validate`, and `report` emit canonical JSON; `extract` emits
-canonical JSON Lines. Identical inputs produce byte-identical outputs. Expected
-input or invariant failures exit `2`; unexpected internal failures exit `1`.
-Both write exactly one JSON error object to stderr with `error.code`,
-`error.message`, and optional `error.details`. A failed command does not create
-or modify its requested output path. Output destinations whose parent is
-missing, is not a directory, or otherwise cannot be opened safely return exit
-`2` with `error.code=invalid-output-path`.
-Inputs whose paths cannot be resolved safely, including symlink loops, return
-exit `2` with `error.code=invalid-input-path` before any output is changed.
-An empty candidates JSONL from a valid no-match extraction is not an error:
-`report` emits the deterministic `time-candidate-v1` zero-metrics report.
-Every parsed JSON record recursively rejects strings or object keys that cannot
-be encoded as UTF-8, including lone surrogate code points in nested fields.
+`normalize`, `report`, and `validate` emit canonical JSON; `extract` emits
+canonical JSON Lines. An empty, valid candidates file is not an error. Every
+parsed JSON record rejects strings or object keys that cannot be encoded as
+UTF-8, including lone surrogate code points in nested fields.
 
 Gate 2 keeps `manifests/`, `artifacts/`, and `releases/` closed by default. The
 repository policy permits only exact empty `.gitkeep` files or fixed root
-`README.md` placeholders in those directories. Opening Gate 3 must first add
-reviewed, schema-specific allowlists; a generic JSON/JSONL extension is not
-authorization to track data.
+`README.md` placeholders there. Opening Gate 3 requires reviewed,
+schema-specific allowlists; an extension such as JSON or JSONL never authorizes
+tracking data.
 
 The implemented record and tool versions are:
 
 | Artifact | Schema version | Tool or policy version |
 | --- | --- | --- |
-| normalized source | `normalized-source-v1` | `normalize-v1` |
-| time candidate | `time-candidate-v1` | `extract-v1` plus the input normalization version |
-| human review input | `time-review-v1` | supplied review evidence |
-| rights input | `rights-decision-v1` | `rights-policy-v1`, profile `zi5-public-corpus-v1` |
-| release projection | `time-release-v1` | `release-v1` |
-| candidate report | `candidate-report-v1` | `report-v1` plus the candidate schema version |
+| normalized source | `normalized-source-v1` | `normalizationVersion=normalize-v1` |
+| time candidate | `time-candidate-v1` | `extractionVersion=extract-v1`; carries `normalizationVersion` |
+| human review input | `time-review-v1` | human-supplied review metadata |
+| rights input | `rights-decision-v1` | `policyVersion=rights-policy-v1`; `targetUseProfile=zi5-public-corpus-v1` |
+| release projection | `time-release-v1` | `releaseVersion=release-v1`; carries normalization, extraction, and rights-policy versions |
+| candidate report | `candidate-report-v1` | `reportVersion=report-v1`; carries `candidateSchemaVersion` |
+| scan run manifest | `scan-run-v1` | `toolVersions.scanVersion=scan-v1`; binds every other scan artifact |
 
-These identifiers describe the current executable contract. Published JSON
-Schema files are still future work and are required before real-source
-acquisition is approved.
+These identifiers describe the executable contract. Published versioned JSON
+Schema files remain future work and are required before real-source acquisition.
 
 ## Documentation
 

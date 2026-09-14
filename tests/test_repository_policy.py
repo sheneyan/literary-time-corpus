@@ -129,6 +129,20 @@ def test_local_workspace_is_ignored_and_never_tracked() -> None:
     assert not [path for path in tracked_paths() if path.parts[0] == ".local"]
 
 
+def test_scan_output_is_ignored_and_never_approved_for_tracking() -> None:
+    probe = "scans/example/normalized.json"
+    ignored = subprocess.run(
+        ["git", "check-ignore", "--quiet", probe],
+        cwd=REPOSITORY_ROOT,
+        check=False,
+    )
+
+    assert ignored.returncode == 0, "scans/ must be ignored by repository policy"
+    assert policy_violations({probe: b'{"analysisText":"source text"}\n'}) == [
+        probe
+    ]
+
+
 def test_tracked_repository_content_satisfies_boundary_policy() -> None:
     violations = policy_violations(tracked_index_files())
 

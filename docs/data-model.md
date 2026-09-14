@@ -22,7 +22,7 @@ category rather than reaching an internal serialization error.
 
 ## Implemented Gate 2 versions
 
-The synthetic CLI currently emits or accepts these schema and version fields:
+The CLI currently emits or accepts these schema and version fields:
 
 | Record | `schemaVersion` | Additional version fields |
 | --- | --- | --- |
@@ -34,8 +34,9 @@ The synthetic CLI currently emits or accepts these schema and version fields:
 | report | `candidate-report-v1` | `reportVersion=report-v1`; carries `candidateSchemaVersion` |
 | scan run manifest | `scan-run-v1` | `toolVersions.scanVersion=scan-v1`; binds every other scan artifact |
 
-This version table describes only the locally verified synthetic interface. It
-is not an acquisition manifest or a dataset publication specification.
+This version table describes the locally verified executable interface. Public
+`ltc scan` runs may analyze user-supplied eligible text, but the table is not an
+acquisition manifest or a dataset publication specification.
 
 A valid extraction may contain zero candidate rows. Reporting an empty JSONL
 therefore emits deterministic zero counts, zero coverage and duplicate
@@ -144,6 +145,9 @@ new entry at the official path. The original error includes only the
 non-sensitive `retainedPathBasename` and `officialPathStatus`. A successful move
 normally leaves the official output path `absent`; if another process creates a
 new entry there, its status is `present` and it is untouched.
+`retainedPathBasename` is only the randomly suffixed quarantine directory name,
+not a path; the retained tree is its `entry` child in the original output
+parent.
 
 The initial staging-directory ownership snapshot and every subsequent
 generation, artifact-write, report/review build, verification, and publication
@@ -161,6 +165,15 @@ distinct `scan-cleanup-failed` error at stage `cleanup`, never reports success,
 and includes the non-sensitive `officialPathStatus` (`absent`, `present`, or
 `unknown`). It does not attempt a check-then-delete or check-then-restore
 fallback.
+
+Successful forced replacement removes the invocation-owned backup only after
+identity checks. Descriptor-relative traversal is used where available, with a
+guarded pathname fallback on platforms that require it. These checks reduce
+race exposure but cannot make the final unlink or rmdir syscall conditional on
+the previously checked inode. The scanner therefore does not claim a security
+guarantee against a malicious process running as the same UID during that final
+cleanup syscall; `--force` is supported only where the anchored publication
+primitives above are available.
 
 The manifest contains no current working directory, absolute path, username,
 hostname, staging name, timestamp, locale, timezone, or environment value.
@@ -219,12 +232,13 @@ The source record also identifies the dated RDF snapshot and exact RDF resource
 from which its `text/plain; charset=utf-8` path was selected. Filename suffixes
 are evidence neither of encoding nor of preferred-edition status.
 
-For the Gate 2 marker normalizer, `transformationLog` contains one deterministic
-`project-gutenberg-marker-body-selection` entry. Its `inputStartByte` and
-`inputEndByte` select the retained body from the untouched source bytes, while
-`outputStartByte=0` and `outputEndByte` select the same bytes from
-`analysisText`. No implicit trimming or line-ending conversion is recorded or
-performed.
+For the Gate 2 normalizer, `transformationLog` contains exactly one deterministic
+entry. Its `method` is `full-file-selection` for the default mode or
+`literal-marker-body-selection` when both literal markers are supplied. Its
+`inputStartByte` and `inputEndByte` select the retained body from the untouched
+source bytes, while `outputStartByte=0` and `outputEndByte` select the same bytes
+from `analysisText`. Apart from excluding a single adjacent LF or CRLF in marker
+mode, no trimming or line-ending conversion is performed.
 
 Both `ltc extract` and `ltc validate` use the same normalized-record validator.
 It accepts only `schemaVersion=normalized-source-v1` with
@@ -397,14 +411,15 @@ config/             committed pilot configuration and schemas
 manifests/          committed source selections and evidence references
 .local/source/      ignored untouched downloads
 .local/analysis/    ignored normalized analysis copies
+scans/              ignored user-supplied scanner outputs
 artifacts/          reproducible candidates, reviews, and reports
 releases/           separately approved public corpus packages
 ```
 
 No data payload belongs in `manifests/`, `artifacts/`, or `releases/` while
-Gate 3 is closed. Before implementation begins, `.local/` must be ignored and
-an automated repository check must reject source ebooks and unapproved excerpt
-data.
+Gate 3 is closed. Both `.local/` and `scans/` are ignored; the automated
+repository check rejects source ebooks, scan output, and unapproved excerpt
+data even if an ignored path is explicitly offered for tracking.
 
 That repository check is now implemented for the current Gate 2 boundary. It
 examines the tracked Git index without requiring a clean worktree and applies
