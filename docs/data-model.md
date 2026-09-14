@@ -126,6 +126,17 @@ program-controlled publication window; they cannot cryptographically prevent a
 same-user process from modifying an artifact after scan has successfully
 exited.
 
+Cleanup never performs a path check followed by path-based recursive deletion.
+It first creates a unique quarantine container in the same parent directory and
+atomically renames the current path entry into it without following symbolic
+links. Only a quarantined regular directory whose device and inode match the
+invocation-owned identity is recursively removed, using descriptor-relative
+symlink-resistant deletion. A mismatched entry is moved back when the original
+name is vacant. If that name became occupied or restoration races, the entry is
+retained under quarantine; cleanup returns, and a verification error reports,
+only the non-sensitive quarantine basename so an operator can inspect it. No
+mismatched file, directory, or symbolic-link target is deleted.
+
 The manifest contains no current working directory, absolute path, username,
 hostname, staging name, timestamp, locale, timezone, or environment value.
 Given identical input bytes, basename, scan options, metadata, and tool

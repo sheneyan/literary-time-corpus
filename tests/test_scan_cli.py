@@ -650,6 +650,83 @@ def test_scan_does_not_remove_replacement_of_its_created_staging_directory(
     assert (replacement_paths[0] / "unrelated.txt").read_text() == "keep"
 
 
+@pytest.mark.parametrize("original_name_occupied", [False, True])
+def test_quarantine_cleanup_preserves_a_directory_swapped_before_atomic_rename(
+    tmp_path: Path,
+    monkeypatch,
+    original_name_occupied: bool,
+) -> None:
+    owned = tmp_path / "owned"
+    owned.mkdir()
+    (owned / "owned.txt").write_text("owned", encoding="utf-8")
+    owned_identity = scan_module._directory_identity(owned)
+    displaced_owned = tmp_path / "displaced-owned"
+    rename = scan_module.os.rename
+    swap_injected = False
+
+    def inject_swap(source, destination, *args, **kwargs):
+        nonlocal swap_injected
+        source_path = Path(source)
+        destination_path = Path(destination)
+        if source_path == owned and not swap_injected:
+            swap_injected = True
+            rename(owned, displaced_owned)
+            owned.mkdir()
+            (owned / "unrelated.txt").write_text("keep", encoding="utf-8")
+        result = rename(source, destination, *args, **kwargs)
+        if (
+            swap_injected
+            and original_name_occupied
+            and destination_path.parent.parent == tmp_path
+            and ".quarantine-" in destination_path.parent.name
+        ):
+            owned.mkdir()
+            (owned / "occupant.txt").write_text("occupant", encoding="utf-8")
+        return result
+
+    monkeypatch.setattr(scan_module.os, "rename", inject_swap)
+
+    retained_name = scan_module._quarantine_owned_directory(
+        owned,
+        owned_identity,
+    )
+
+    assert (displaced_owned / "owned.txt").read_text() == "owned"
+    if original_name_occupied:
+        assert retained_name is not None
+        assert Path(retained_name).name == retained_name
+        assert (owned / "occupant.txt").read_text() == "occupant"
+        assert (
+            tmp_path / retained_name / "entry" / "unrelated.txt"
+        ).read_text() == "keep"
+    else:
+        assert retained_name is None
+        assert (owned / "unrelated.txt").read_text() == "keep"
+
+
+def test_quarantine_cleanup_moves_symlink_without_following_it(
+    tmp_path: Path,
+) -> None:
+    owned = tmp_path / "owned"
+    owned.mkdir()
+    owned_identity = scan_module._directory_identity(owned)
+    displaced_owned = tmp_path / "displaced-owned"
+    owned.rename(displaced_owned)
+    external = tmp_path / "external"
+    external.mkdir()
+    (external / "keep.txt").write_text("keep", encoding="utf-8")
+    owned.symlink_to(external, target_is_directory=True)
+
+    retained_name = scan_module._quarantine_owned_directory(
+        owned,
+        owned_identity,
+    )
+
+    assert retained_name is None
+    assert owned.is_symlink()
+    assert (external / "keep.txt").read_text() == "keep"
+
+
 def test_scan_review_renders_all_empty_sections(run_ltc, tmp_path: Path) -> None:
     source = tmp_path / "quiet.txt"
     destination = tmp_path / "scan"

@@ -263,15 +263,82 @@ def _directory_identity(path: Path) -> DirectoryIdentity:
     return status.st_dev, status.st_ino
 
 
-def _remove_directory_if_identity_matches(
+def _quarantine_owned_directory(
     path: Path,
     expected_identity: DirectoryIdentity,
-) -> None:
+) -> str | None:
     try:
-        if _directory_identity(path) == expected_identity:
-            shutil.rmtree(path)
-    except (OSError, ScanError):
-        return
+        quarantine = Path(
+            tempfile.mkdtemp(
+                prefix=f".{path.name}.quarantine-",
+                dir=path.parent,
+            )
+        )
+    except OSError:
+        return None
+    moved_entry = quarantine / "entry"
+    try:
+        os.rename(path, moved_entry)
+    except FileNotFoundError:
+        try:
+            quarantine.rmdir()
+        except OSError:
+            pass
+        return None
+    except OSError:
+        try:
+            quarantine.rmdir()
+        except OSError:
+            pass
+        return None
+
+    try:
+        moved_status = moved_entry.lstat()
+    except OSError:
+        return quarantine.name
+    moved_identity = (moved_status.st_dev, moved_status.st_ino)
+    if not stat.S_ISDIR(moved_status.st_mode) or moved_identity != expected_identity:
+        if not os.path.lexists(path):
+            try:
+                os.rename(moved_entry, path)
+                quarantine.rmdir()
+                return None
+            except OSError:
+                pass
+        return quarantine.name
+
+    parent_descriptor: int | None = None
+    entry_descriptor: int | None = None
+    try:
+        parent_descriptor = os.open(
+            quarantine,
+            os.O_RDONLY | getattr(os, "O_DIRECTORY", 0),
+        )
+        entry_descriptor = os.open(
+            "entry",
+            os.O_RDONLY
+            | getattr(os, "O_DIRECTORY", 0)
+            | getattr(os, "O_NOFOLLOW", 0),
+            dir_fd=parent_descriptor,
+        )
+        opened_status = os.fstat(entry_descriptor)
+        if (
+            not stat.S_ISDIR(opened_status.st_mode)
+            or (opened_status.st_dev, opened_status.st_ino) != expected_identity
+        ):
+            return quarantine.name
+        if not getattr(shutil.rmtree, "avoids_symlink_attacks", False):
+            return quarantine.name
+        shutil.rmtree("entry", dir_fd=parent_descriptor)
+        quarantine.rmdir()
+        return None
+    except OSError:
+        return quarantine.name
+    finally:
+        if entry_descriptor is not None:
+            os.close(entry_descriptor)
+        if parent_descriptor is not None:
+            os.close(parent_descriptor)
 
 
 def build_run_manifest(
@@ -603,10 +670,14 @@ def scan_file(
                 expected_identities=artifact_identities,
             )
         except ScanError:
-            _remove_directory_if_identity_matches(
+            quarantine_name = _quarantine_owned_directory(
                 output_path,
                 created_directory_identity,
             )
+            if quarantine_name is not None:
+                cleanup_error = _verification_failed()
+                cleanup_error.details["quarantineName"] = quarantine_name
+                raise cleanup_error from None
             raise
         return {
             "candidateCount": counts["candidateCount"],
@@ -615,7 +686,7 @@ def scan_file(
             "status": "complete",
         }
     finally:
-        _remove_directory_if_identity_matches(
+        _quarantine_owned_directory(
             staging_path,
             created_directory_identity,
         )
