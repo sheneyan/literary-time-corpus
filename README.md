@@ -35,6 +35,15 @@ Literature Clock user interface during the pilot.
 See the [project brief](docs/project-brief.md) for the confirmed scope, data
 semantics, evaluation requirements, and publication gates.
 
+## Documentation
+
+- [Project brief](docs/project-brief.md)
+- [Project Gutenberg source-policy research](docs/research/gutenberg-source-policy.md)
+- [Bounded pilot design](docs/pilot-design.md)
+- [Pilot data model](docs/data-model.md)
+- [Rights and publication policy](docs/rights-policy.md)
+- [Evaluation protocol](docs/evaluation-protocol.md)
+
 ## Licensing and rights
 
 Project-authored software and documentation are licensed under the
