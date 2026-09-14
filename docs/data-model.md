@@ -14,6 +14,12 @@ source acquisition. JSON property order is not semantically significant;
 generated artifacts nevertheless use a stable serialization for deterministic
 hashes and diffs.
 
+Before domain validation or serialization, one shared recursive guard checks
+every string value and object key in normalized, candidate, review, and rights
+records for UTF-8 encodability. This includes unknown extension fields at any
+nesting depth; lone surrogate code points fail under the record's normal error
+category rather than reaching an internal serialization error.
+
 ## Implemented Gate 2 versions
 
 The synthetic CLI currently emits or accepts these schema and version fields:

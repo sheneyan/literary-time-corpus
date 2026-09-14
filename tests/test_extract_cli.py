@@ -355,3 +355,21 @@ def test_extract_requires_complete_exact_normalized_record(run_ltc, tmp_path: Pa
         assert result.returncode == 2
         assert json.loads(result.stderr)["error"]["code"] == "invalid-normalized-source"
         assert not output.exists()
+
+
+def test_extract_rejects_nested_non_utf8_encodable_normalized_fields(
+    run_ltc, tmp_path: Path
+) -> None:
+    normalized = normalized_fixture(run_ltc, tmp_path)
+    document = json.loads(normalized.read_text(encoding="utf-8"))
+    document["extension"] = {"nested": "\ud800"}
+    normalized.write_text(json.dumps(document), encoding="utf-8")
+    output = tmp_path / "candidates.jsonl"
+    prior = b"preserve existing candidates\n"
+    output.write_bytes(prior)
+
+    result = run_ltc("extract", "--input", normalized, "--output", output)
+
+    assert result.returncode == 2
+    assert json.loads(result.stderr)["error"]["code"] == "invalid-normalized-source"
+    assert output.read_bytes() == prior

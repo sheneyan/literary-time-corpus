@@ -10,6 +10,7 @@ from typing import Any
 from urllib.parse import urlsplit
 
 from literary_time_corpus.candidate import candidate_record_violations
+from literary_time_corpus.encoding import all_strings_encode_utf8
 from literary_time_corpus.io import write_json_atomic
 from literary_time_corpus.normalized import normalized_record_violations
 
@@ -265,6 +266,10 @@ def _collect_violations(
     if review.get("schemaVersion") != "time-review-v1":
         violations.append("invalid-review-document")
     if rights.get("schemaVersion") != "rights-decision-v1":
+        violations.append("invalid-rights-document")
+    if not all_strings_encode_utf8(review):
+        violations.append("invalid-review-document")
+    if not all_strings_encode_utf8(rights):
         violations.append("invalid-rights-document")
 
     if candidate.get("precision") != "exact-minute-resolved":

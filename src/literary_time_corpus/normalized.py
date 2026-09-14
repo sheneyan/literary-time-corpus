@@ -4,6 +4,8 @@ import hashlib
 import re
 from typing import Any
 
+from literary_time_corpus.encoding import all_strings_encode_utf8
+
 
 NORMALIZED_SCHEMA_VERSION = "normalized-source-v1"
 NORMALIZATION_VERSION = "normalize-v1"
@@ -29,6 +31,8 @@ def normalized_record_violations(document: Any) -> list[str]:
         return ["not-an-object"]
 
     violations: list[str] = []
+    if not all_strings_encode_utf8(document):
+        violations.append("non-utf8-string")
     analysis_text = document.get("analysisText")
     try:
         analysis_bytes = analysis_text.encode("utf-8")

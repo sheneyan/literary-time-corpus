@@ -366,3 +366,29 @@ def test_report_rejects_non_utf8_encodable_json_strings_without_overwriting(
         "message": "candidate row does not satisfy time-candidate-v1",
     }
     assert output.read_bytes() == b"preserve\n"
+
+
+def test_report_rejects_nested_non_utf8_encodable_candidate_with_line_detail(
+    run_ltc, tmp_path: Path
+) -> None:
+    input_path = tmp_path / "surrogate.jsonl"
+    input_path.write_text(
+        json.dumps(first_candidate())
+        + "\n"
+        + json.dumps({**first_candidate(), "extension": {"nested": "\ud800"}})
+        + "\n",
+        encoding="utf-8",
+    )
+    output = tmp_path / "report.json"
+    prior = b"preserve\n"
+    output.write_bytes(prior)
+
+    result = run_ltc("report", "--input", input_path, "--output", output)
+
+    assert result.returncode == 2
+    assert json.loads(result.stderr)["error"] == {
+        "code": "invalid-candidate-jsonl",
+        "details": {"line": 2},
+        "message": "candidate row does not satisfy time-candidate-v1",
+    }
+    assert output.read_bytes() == prior

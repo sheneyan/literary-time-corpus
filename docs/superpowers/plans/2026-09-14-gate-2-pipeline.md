@@ -22,6 +22,10 @@ failed invariant exits `2`, writes exactly one JSON object to stderr with
 or modify the requested output on failure. Unexpected internal failures exit
 `1` using the same envelope with code `internal-error`.
 
+All parsed JSON records first pass a shared recursive UTF-8-encodability guard
+over string keys and values, including unknown nested fields, before domain
+validation or output serialization.
+
 ## Task 1: Package shell and deterministic normalization
 
 **Files:**

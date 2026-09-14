@@ -4,6 +4,7 @@ import hashlib
 import re
 from typing import Any
 
+from literary_time_corpus.encoding import all_strings_encode_utf8
 from literary_time_corpus.normalized import NORMALIZATION_VERSION
 
 
@@ -31,23 +32,6 @@ RESOLUTION_METHOD_BY_RULE_FAMILY = {
 
 def _is_nonblank_string(value: Any) -> bool:
     return isinstance(value, str) and bool(value.strip())
-
-
-def _all_strings_encode_utf8(value: Any) -> bool:
-    if isinstance(value, str):
-        try:
-            value.encode("utf-8")
-        except UnicodeEncodeError:
-            return False
-        return True
-    if isinstance(value, list):
-        return all(_all_strings_encode_utf8(item) for item in value)
-    if isinstance(value, dict):
-        return all(
-            _all_strings_encode_utf8(key) and _all_strings_encode_utf8(item)
-            for key, item in value.items()
-        )
-    return True
 
 
 def _valid_reason_codes(value: Any) -> bool:
@@ -172,7 +156,7 @@ def candidate_record_violations(candidate: Any) -> list[str]:
         return ["not-an-object"]
 
     violations: list[str] = []
-    strings_encode_utf8 = _all_strings_encode_utf8(candidate)
+    strings_encode_utf8 = all_strings_encode_utf8(candidate)
     if not strings_encode_utf8:
         violations.append("non-utf8-string")
     if candidate.get("schemaVersion") != CANDIDATE_SCHEMA_VERSION:

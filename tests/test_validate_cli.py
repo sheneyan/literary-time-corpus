@@ -17,7 +17,7 @@ def load_fixture(name: str) -> dict[str, Any]:
 
 
 def write_document(path: Path, document: dict[str, Any]) -> None:
-    path.write_text(json.dumps(document, ensure_ascii=False), encoding="utf-8")
+    path.write_text(json.dumps(document, ensure_ascii=True), encoding="utf-8")
 
 
 def run_validate(
@@ -28,6 +28,7 @@ def run_validate(
     candidate: dict[str, Any] | None = None,
     review: dict[str, Any] | None = None,
     rights: dict[str, Any] | None = None,
+    prior_output: bytes | None = None,
 ):
     documents = {
         "analysis": analysis if analysis is not None else load_fixture("analysis.json"),
@@ -39,6 +40,8 @@ def run_validate(
     for name, document in documents.items():
         write_document(paths[name], document)
     output = tmp_path / "release.json"
+    if prior_output is not None:
+        output.write_bytes(prior_output)
     result = run_ltc(
         "validate",
         "--analysis",
@@ -53,6 +56,54 @@ def run_validate(
         output,
     )
     return result, output
+
+
+@pytest.mark.parametrize(
+    ("document_name", "mutation", "expected_violation"),
+    [
+        (
+            "analysis",
+            lambda document: document.update(extension={"nested": "\ud800"}),
+            "invalid-analysis-document",
+        ),
+        (
+            "candidate",
+            lambda document: document["provenance"].update(privateNote="\ud800"),
+            "invalid-candidate-document",
+        ),
+        (
+            "review",
+            lambda document: document["attribution"].update(privateNote="\ud800"),
+            "invalid-review-document",
+        ),
+        (
+            "rights",
+            lambda document: document["assessments"][0].update(privateNote="\ud800"),
+            "invalid-rights-document",
+        ),
+    ],
+)
+def test_validate_rejects_nested_non_utf8_encodable_json_strings(
+    run_ltc,
+    tmp_path: Path,
+    document_name: str,
+    mutation: Callable[[dict[str, Any]], None],
+    expected_violation: str,
+) -> None:
+    document = mutate_fixture(document_name + ".json", mutation)
+    prior = b"preserve existing release\n"
+
+    result, output = run_validate(
+        run_ltc,
+        tmp_path,
+        prior_output=prior,
+        **{document_name: document},
+    )
+
+    assert result.returncode == 2
+    assert stderr_error(result)["code"] == "release-validation-failed"
+    assert expected_violation in stderr_error(result)["details"]["violations"]
+    assert output.read_bytes() == prior
 
 
 def mutate_fixture(name: str, mutation: Callable[[dict[str, Any]], None]) -> dict[str, Any]:
