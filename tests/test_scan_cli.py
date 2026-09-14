@@ -11,6 +11,7 @@ import pytest
 
 import literary_time_corpus.scan as scan_module
 from literary_time_corpus.cli import main
+from literary_time_corpus.io import OutputPathError
 from literary_time_corpus.review import render_review_markdown
 
 
@@ -828,6 +829,69 @@ def test_scan_reports_cleanup_failure_without_claiming_success(
         "stage": "cleanup",
     }
     assert destination.exists()
+
+
+def test_scan_retains_staging_when_first_artifact_write_fails(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    source = tmp_path / "book.txt"
+    destination = tmp_path / "scan"
+    source.write_text("The bell rang at 13:15.\n", encoding="utf-8")
+
+    def reject_first_write(*args, **kwargs):
+        raise OutputPathError()
+
+    monkeypatch.setattr(scan_module, "write_json_atomic", reject_first_write)
+
+    exit_code = main(["scan", str(source), "--output", str(destination)])
+    captured = capsys.readouterr()
+
+    assert exit_code == 2
+    assert captured.out == ""
+    error = json.loads(captured.err)["error"]
+    assert error["code"] == "invalid-output-path"
+    assert_retained_failure_details(error, tmp_path, stage="staging")
+    assert not destination.exists()
+
+
+def test_scan_retains_staging_when_initial_identity_snapshot_fails(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    source = tmp_path / "book.txt"
+    destination = tmp_path / "scan"
+    source.write_text("The bell rang at 13:15.\n", encoding="utf-8")
+
+    def reject_identity_snapshot(path: Path):
+        raise scan_module.ScanError(
+            "scan-verification-failed",
+            "synthetic identity failure",
+            stage="verification",
+        )
+
+    monkeypatch.setattr(scan_module, "_directory_identity", reject_identity_snapshot)
+
+    exit_code = main(["scan", str(source), "--output", str(destination)])
+    captured = capsys.readouterr()
+
+    assert exit_code == 2
+    assert captured.out == ""
+    error = json.loads(captured.err)["error"]
+    assert error["code"] == "scan-verification-failed"
+    assert_retained_failure_details(error, tmp_path, stage="verification")
+    assert not destination.exists()
+
+
+def test_successful_scan_leaves_no_staging_or_quarantine_directory(
+    run_ltc, tmp_path: Path
+) -> None:
+    source = tmp_path / "book.txt"
+    destination = tmp_path / "scan"
+    source.write_text("The bell rang at 13:15.\n", encoding="utf-8")
+
+    result = run_ltc("scan", source, "--output", destination)
+
+    assert result.returncode == 0, result.stderr
+    assert sorted(path.name for path in tmp_path.iterdir()) == ["book.txt", "scan"]
 
 
 def test_scan_review_renders_all_empty_sections(run_ltc, tmp_path: Path) -> None:

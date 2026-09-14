@@ -154,6 +154,13 @@ official path. The error reports only `retainedPathBasename` and
 returns the distinct `scan-cleanup-failed` error with the non-sensitive official
 path status and cannot report success.
 
+The ownership snapshot and all staged artifact generation, write, build,
+verification, and publication operations are inside the same ordinary-exception
+boundary. Every such failure attempts retention and reports the retained
+basename/status. Controlled domain errors preserve their code and stage;
+unexpected exceptions use `internal-generation-failed` with stage `staging`.
+The boundary does not catch `KeyboardInterrupt` or `SystemExit`.
+
 Expected failures exit `2`; unexpected internal failures exit `1`. Errors use
 the existing single-object JSON stderr envelope and add the failed stage to
 `error.details.stage`. Standard output contains exactly one compact JSON object

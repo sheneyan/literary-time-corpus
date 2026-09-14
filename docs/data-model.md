@@ -136,6 +136,15 @@ non-sensitive `retainedPathBasename` and `officialPathStatus`. A successful move
 normally leaves the official output path `absent`; if another process creates a
 new entry there, its status is `present` and it is untouched.
 
+The initial staging-directory ownership snapshot and every subsequent
+generation, artifact-write, report/review build, verification, and publication
+step share one exception boundary. Any ordinary `Exception` after staging is
+created therefore attempts the same retention protocol. Controlled scan errors
+keep their existing code and stage; an escaped output-write error keeps its
+domain code and uses stage `staging`; other unexpected generation exceptions
+become `internal-generation-failed` at stage `staging`. `KeyboardInterrupt` and
+`SystemExit` are not caught by this boundary.
+
 If the quarantine cannot be created or the atomic move fails, scan returns the
 distinct `scan-cleanup-failed` error at stage `cleanup`, never reports success,
 and includes the non-sensitive `officialPathStatus` (`absent`, `present`, or

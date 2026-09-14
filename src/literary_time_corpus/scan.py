@@ -20,6 +20,7 @@ from literary_time_corpus.candidate import (
 )
 from literary_time_corpus.extract import ExtractionError, extract_candidates
 from literary_time_corpus.io import (
+    OutputPathError,
     canonical_json_bytes,
     write_json_atomic,
     write_jsonl_atomic,
@@ -290,7 +291,7 @@ def _cleanup_failed(
 
 def _retain_path_entry_in_quarantine(
     path: Path,
-    expected_identity: DirectoryIdentity,
+    expected_identity: DirectoryIdentity | None,
 ) -> dict[str, object] | None:
     try:
         quarantine = Path(
@@ -331,12 +332,29 @@ def _retain_path_entry_in_quarantine(
     moved_identity = (moved_status.st_dev, moved_status.st_ino)
     return {
         "identityMatched": (
-            stat.S_ISDIR(moved_status.st_mode)
+            expected_identity is not None
+            and stat.S_ISDIR(moved_status.st_mode)
             and moved_identity == expected_identity
         ),
         "officialPathStatus": _path_entry_status(path),
         "retainedPathBasename": quarantine.name,
     }
+
+
+def _staging_failure(error: Exception) -> ScanError:
+    if isinstance(error, ScanError):
+        return error
+    if isinstance(error, OutputPathError):
+        return ScanError(
+            error.code,
+            str(error),
+            stage="staging",
+        )
+    return ScanError(
+        "internal-generation-failed",
+        "scan generation failed",
+        stage="staging",
+    )
 
 
 def build_run_manifest(
@@ -627,10 +645,10 @@ def scan_file(
             "could not create output directory",
             stage="publication",
         ) from error
-    created_directory_identity = _directory_identity(staging_path)
-
     cleanup_path = staging_path
+    created_directory_identity: DirectoryIdentity | None = None
     try:
+        created_directory_identity = _directory_identity(staging_path)
         counts, source, run = scan_to_staging(
             input_path,
             staging_path,
@@ -674,7 +692,8 @@ def scan_file(
             "resolvedMinuteCount": counts["resolvedMinuteCount"],
             "status": "complete",
         }
-    except ScanError as error:
+    except Exception as caught_error:
+        error = _staging_failure(caught_error)
         retention = _retain_path_entry_in_quarantine(
             cleanup_path,
             created_directory_identity,
@@ -686,4 +705,6 @@ def scan_file(
             error.details["retainedPathBasename"] = retention[
                 "retainedPathBasename"
             ]
-        raise
+        if error is caught_error:
+            raise
+        raise error from caught_error
