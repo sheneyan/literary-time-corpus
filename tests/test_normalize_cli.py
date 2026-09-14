@@ -55,6 +55,15 @@ def test_normalize_preserves_the_exact_utf8_body_and_provenance(
         "sourceSha256": (
             "5e4fb58e2bad12b054d129295152fba067b6147b7f11e2fcc83799ab511ccfb1"
         ),
+        "transformationLog": [
+            {
+                "inputEndByte": 179,
+                "inputStartByte": 99,
+                "method": "project-gutenberg-marker-body-selection",
+                "outputEndByte": 80,
+                "outputStartByte": 0,
+            }
+        ],
     }
     source_bytes = (FIXTURES / "valid.txt").read_bytes()
     assert source_bytes[document["bodyStartByte"] : document["bodyEndByte"]] == (
@@ -75,6 +84,23 @@ def test_normalize_is_byte_deterministic(run_ltc, tmp_path: Path) -> None:
 
     assert first_result.returncode == second_result.returncode == 0
     assert first.read_bytes() == second.read_bytes()
+
+
+def test_normalize_classifies_shared_writer_invalid_output_path(
+    run_ltc, tmp_path: Path
+) -> None:
+    output = tmp_path / "missing" / "normalized.json"
+
+    result = run_ltc(
+        "normalize", "--input", FIXTURES / "valid.txt", "--output", output
+    )
+
+    assert result.returncode == 2
+    assert parse_error(result.stderr)["error"] == {
+        "code": "invalid-output-path",
+        "message": "could not write output path",
+    }
+    assert not output.exists()
 
 
 def test_normalize_rejects_missing_start_marker(run_ltc, tmp_path: Path) -> None:

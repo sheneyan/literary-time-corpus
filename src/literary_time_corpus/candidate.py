@@ -6,6 +6,8 @@ from typing import Any
 
 
 CANDIDATE_SCHEMA_VERSION = "time-candidate-v1"
+NORMALIZATION_VERSION = "normalize-v1"
+EXTRACTION_VERSION = "extract-v1"
 TIME_PATTERN = re.compile(r"(?:[01][0-9]|2[0-3]):[0-5][0-9]")
 SHA256_PATTERN = re.compile(r"[0-9a-f]{64}")
 STATUSES = {"detected", "automatically-excluded", "awaiting-review", "reviewed"}
@@ -13,6 +15,16 @@ PRECISIONS = {
     "exact-minute-resolved",
     "exact-minute-ambiguous",
     "approximate",
+}
+CONTEXTUAL_RESOLUTION_METHODS = {
+    "explicit-meridiem",
+    "explicit-24-hour-clock",
+    "named-time",
+}
+RESOLUTION_METHOD_BY_RULE_FAMILY = {
+    "numeric-12-hour": "explicit-meridiem",
+    "numeric-24-hour": "explicit-24-hour-clock",
+    "named-time": "named-time",
 }
 
 
@@ -59,6 +71,54 @@ def _valid_offsets(candidate: dict[str, Any]) -> bool:
     return 0 <= excerpt_start <= match_start < match_end <= excerpt_end
 
 
+def _valid_contextual_resolution(candidate: dict[str, Any]) -> bool:
+    resolution = candidate.get("contextualResolution")
+    if candidate.get("precision") != "exact-minute-resolved":
+        return resolution is None
+    if not isinstance(resolution, dict) or set(resolution) != {
+        "method",
+        "evidenceStartByte",
+        "evidenceEndByte",
+        "evidenceText",
+    }:
+        return False
+    method = resolution.get("method")
+    evidence_start = resolution.get("evidenceStartByte")
+    evidence_end = resolution.get("evidenceEndByte")
+    evidence_text = resolution.get("evidenceText")
+    match_start = candidate.get("matchStartByte")
+    match_end = candidate.get("matchEndByte")
+    if (
+        method not in CONTEXTUAL_RESOLUTION_METHODS
+        or method != RESOLUTION_METHOD_BY_RULE_FAMILY.get(candidate.get("ruleFamily"))
+        or not isinstance(evidence_start, int)
+        or isinstance(evidence_start, bool)
+        or not isinstance(evidence_end, int)
+        or isinstance(evidence_end, bool)
+        or not _is_nonblank_string(evidence_text)
+        or not isinstance(match_start, int)
+        or isinstance(match_start, bool)
+        or not isinstance(match_end, int)
+        or isinstance(match_end, bool)
+        or not match_start <= evidence_start < evidence_end <= match_end
+    ):
+        return False
+    excerpt = candidate.get("excerpt")
+    excerpt_start = candidate.get("excerptStartByte")
+    if not isinstance(excerpt, str) or not isinstance(excerpt_start, int):
+        return False
+    relative_start = evidence_start - excerpt_start
+    relative_end = evidence_end - excerpt_start
+    try:
+        excerpt_bytes = excerpt.encode("utf-8")
+        return (
+            excerpt_bytes[relative_start:relative_end].decode("utf-8") == evidence_text
+            and len(evidence_text.encode("utf-8")) == evidence_end - evidence_start
+        )
+    except (UnicodeDecodeError, UnicodeEncodeError):
+        return False
+
+
 def candidate_record_violations(candidate: Any) -> list[str]:
     if not isinstance(candidate, dict):
         return ["not-an-object"]
@@ -72,14 +132,17 @@ def candidate_record_violations(candidate: Any) -> list[str]:
 
     for field in (
         "sourceId",
-        "normalizationVersion",
-        "extractionVersion",
         "ruleFamily",
         "ruleId",
         "matchedText",
     ):
         if not _is_nonblank_string(candidate.get(field)):
             violations.append(f"invalid-{field}")
+
+    if candidate.get("normalizationVersion") != NORMALIZATION_VERSION:
+        violations.append("invalid-normalizationVersion")
+    if candidate.get("extractionVersion") != EXTRACTION_VERSION:
+        violations.append("invalid-extractionVersion")
 
     for field in ("candidateId", "sourceSha256", "analysisTextSha256"):
         value = candidate.get(field)
@@ -155,6 +218,9 @@ def candidate_record_violations(candidate: Any) -> list[str]:
             byte_lengths_match = False
         if not byte_lengths_match:
             violations.append("offset-text-mismatch")
+
+    if not _valid_contextual_resolution(candidate):
+        violations.append("invalid-contextualResolution")
 
     identity_fields = (
         candidate.get("sourceId"),

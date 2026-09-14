@@ -81,6 +81,13 @@ The source record also identifies the dated RDF snapshot and exact RDF resource
 from which its `text/plain; charset=utf-8` path was selected. Filename suffixes
 are evidence neither of encoding nor of preferred-edition status.
 
+For the Gate 2 marker normalizer, `transformationLog` contains one deterministic
+`project-gutenberg-marker-body-selection` entry. Its `inputStartByte` and
+`inputEndByte` select the retained body from the untouched source bytes, while
+`outputStartByte=0` and `outputEndByte` select the same bytes from
+`analysisText`. No implicit trimming or line-ending conversion is recorded or
+performed.
+
 ### Candidate match
 
 An immutable automated observation against one source snapshot.
@@ -97,6 +104,14 @@ Required semantics:
 - precision class;
 - contextual resolution method and exact evidence span, if any; and
 - automated exclusion or warning reason codes.
+
+Gate 2 represents contextual resolution as `contextualResolution`. Resolved
+candidates contain exactly `method`, `evidenceStartByte`, `evidenceEndByte`,
+and `evidenceText`. The byte offsets select the evidence exactly from the fixed
+UTF-8 analysis text and lie within the matched expression. Supported methods
+are `explicit-meridiem`, `explicit-24-hour-clock`, and `named-time`.
+Ambiguous and approximate candidates set `contextualResolution` explicitly to
+JSON `null`; absence, an empty object, or an invented method is invalid.
 
 The Gate 2 candidate also emits
 `sourceHashStatus="carried-from-normalization"`. This means extraction checked
@@ -224,9 +239,10 @@ artifacts/          reproducible candidates, reviews, and reports
 releases/           separately approved public corpus packages
 ```
 
-No source ebook belongs in `manifests/`, `artifacts/`, or `releases/`. Before
-implementation begins, `.local/` must be ignored and an automated repository
-check must reject source ebooks and unapproved excerpt data.
+No data payload belongs in `manifests/`, `artifacts/`, or `releases/` while
+Gate 3 is closed. Before implementation begins, `.local/` must be ignored and
+an automated repository check must reject source ebooks and unapproved excerpt
+data.
 
 That repository check is now implemented for the current Gate 2 boundary. It
 examines the tracked Git index without requiring a clean worktree and applies
@@ -238,13 +254,24 @@ these conventions:
   rejected everywhere except the three current synthetic fixtures, each
   approved by its exact repository path and SHA-256 rather than by a
   self-attested `synthetic` label;
-- `manifests/` accepts committed metadata only as JSON, JSON Lines, or RDF, plus
-  root `README.md`/`.gitkeep` placeholders and strictly validated relative
-  ebook-path lists named `*-paths.txt`; and
-- while Gate 4 remains unopened, `releases/` accepts only a zero-byte root
-  `.gitkeep` or a root `README.md` whose bytes exactly equal the approved
-  template below. Every other tracked file is rejected regardless of whether
-  it uses JSON, CSV, TSV, NDJSON, a binary extension, or no extension.
+- while Gate 3 remains unopened, `manifests/` and `artifacts/` accept only an
+  exact zero-byte root `.gitkeep` or their fixed root `README.md` placeholder;
+- while Gate 4 remains unopened, `releases/` has the same deny-by-default rule;
+  and
+- every other tracked file in those roots is rejected regardless of whether it
+  uses JSON, JSONL, RDF, CSV, a binary extension, or no extension.
+
+```markdown
+# Manifests
+
+No Gate 3 manifest schema is approved.
+```
+
+```markdown
+# Artifacts
+
+No Gate 3 artifact schema is approved.
+```
 
 ```markdown
 # Releases
@@ -252,9 +279,12 @@ these conventions:
 No public corpus release is approved.
 ```
 
-The release rule is intentionally absolute because Gate 4 has approved no
-public excerpt artifact. A future release approval process must replace it
-before any corpus package is committed. Changing a synthetic fixture's path or
-any byte of its contents also fails repository policy until a reviewer verifies
+These rules are intentionally absolute because Gate 3 has approved no tracked
+data schema and Gate 4 has approved no public excerpt artifact. Gate 3 must
+introduce reviewed, exact schema/path allowlists before any manifest or
+generated artifact is committed; suffix-only exceptions are forbidden. A
+future release approval process must separately replace the release rule before
+any corpus package is committed. Changing a synthetic fixture's path or any
+byte of its contents also fails repository policy until a reviewer verifies
 that it remains fully synthetic and deliberately updates the fixture SHA-256
 allowlist.

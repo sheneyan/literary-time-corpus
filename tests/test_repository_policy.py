@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import hashlib
-import re
 import subprocess
 from pathlib import Path, PurePosixPath
 from typing import Mapping
@@ -31,19 +30,20 @@ EBOOK_OR_ARCHIVE_SUFFIXES = {
     ".zip",
 }
 RAW_TEXT_SUFFIXES = {".text", ".txt", ".utf-8", ".utf8"}
-ALLOWED_RELEASE_PLACEHOLDER_BYTES = {
+ALLOWED_DATA_ROOT_PLACEHOLDER_BYTES = {
+    PurePosixPath("manifests/.gitkeep"): b"",
+    PurePosixPath("manifests/README.md"): (
+        b"# Manifests\n\nNo Gate 3 manifest schema is approved.\n"
+    ),
+    PurePosixPath("artifacts/.gitkeep"): b"",
+    PurePosixPath("artifacts/README.md"): (
+        b"# Artifacts\n\nNo Gate 3 artifact schema is approved.\n"
+    ),
     PurePosixPath("releases/.gitkeep"): b"",
     PurePosixPath("releases/README.md"): (
         b"# Releases\n\nNo public corpus release is approved.\n"
     ),
 }
-ALLOWED_MANIFEST_PLACEHOLDERS = {
-    PurePosixPath("manifests/.gitkeep"),
-    PurePosixPath("manifests/README.md"),
-}
-ALLOWED_MANIFEST_SUFFIXES = {".json", ".jsonl", ".rdf"}
-PATH_LIST_NAME = re.compile(r"[a-z0-9][a-z0-9._-]*-paths\.txt")
-PATH_LIST_LINE = re.compile(r"[A-Za-z0-9._/-]+\.txt")
 APPROVED_SYNTHETIC_FIXTURE_SHA256 = {
     PurePosixPath("tests/fixtures/extract/times.txt"): (
         "dc5cd733c1d408a52912d1bae3a8dc6ba03d555a30f283b930613955deb4b806"
@@ -92,43 +92,14 @@ def is_synthetic_text_fixture(path: PurePosixPath, content: bytes) -> bool:
     )
 
 
-def is_approved_path_list(path: PurePosixPath, content: bytes) -> bool:
-    if (
-        path.parts[:1] != ("manifests",)
-        or PATH_LIST_NAME.fullmatch(path.name) is None
-    ):
-        return False
-    try:
-        text = content.decode("utf-8")
-    except UnicodeDecodeError:
-        return False
-    lines = text.splitlines()
-    return bool(lines) and len(lines) == len(set(lines)) and all(
-        line == line.strip()
-        and PATH_LIST_LINE.fullmatch(line) is not None
-        and ".." not in PurePosixPath(line).parts
-        and not PurePosixPath(line).is_absolute()
-        for line in lines
-    )
-
-
 def policy_violations(files: Mapping[str, bytes]) -> list[str]:
     violations: list[str] = []
     for raw_path, content in files.items():
         path = PurePosixPath(raw_path)
-        if path.parts[:1] == ("releases",):
-            expected_placeholder = ALLOWED_RELEASE_PLACEHOLDER_BYTES.get(path)
+        if path.parts[:1] in {("manifests",), ("artifacts",), ("releases",)}:
+            expected_placeholder = ALLOWED_DATA_ROOT_PLACEHOLDER_BYTES.get(path)
             if expected_placeholder is None or content != expected_placeholder:
                 violations.append(raw_path)
-            continue
-        if path.parts[:1] == ("manifests",):
-            if (
-                path in ALLOWED_MANIFEST_PLACEHOLDERS
-                or path.suffix.lower() in ALLOWED_MANIFEST_SUFFIXES
-                or is_approved_path_list(path, content)
-            ):
-                continue
-            violations.append(raw_path)
             continue
         if path.suffix.lower() in EBOOK_OR_ARCHIVE_SUFFIXES:
             violations.append(raw_path)
@@ -221,30 +192,33 @@ def test_synthetic_label_cannot_self_approve_copied_fixture_prose() -> None:
     assert policy_violations(files) == sorted(files)
 
 
-def test_planned_manifest_metadata_and_named_path_lists_are_allowed() -> None:
+def test_closed_gate_3_rejects_payloads_in_all_reserved_data_roots() -> None:
     files = {
-        "manifests/pilot.json": b'{"sourceId":"synthetic_123"}\n',
-        "manifests/pilot.jsonl": b'{"sourceId":"synthetic_123"}\n',
-        "manifests/catalog.rdf": b"<rdf:RDF></rdf:RDF>\n",
-        "manifests/pilot-approved-paths.txt": (
-            b"1/2/3/123/123-0.txt\n4/5/6/456/456.txt\n"
-        ),
+        "manifests/book.json": b'{"excerpt":"hidden payload"}\n',
+        "artifacts/corpus.jsonl": b'{"excerpt":"hidden payload"}\n',
+        "artifacts/book": b"extensionless hidden payload\n",
+        "releases/book.json": b'{"excerpt":"hidden payload"}\n',
+    }
+
+    assert policy_violations(files) == sorted(files)
+
+
+def test_closed_gate_3_allows_only_exact_root_placeholders() -> None:
+    files = {
+        "manifests/.gitkeep": b"",
+        "manifests/README.md": b"# Manifests\n\nNo Gate 3 manifest schema is approved.\n",
+        "artifacts/.gitkeep": b"",
+        "artifacts/README.md": b"# Artifacts\n\nNo Gate 3 artifact schema is approved.\n",
     }
 
     assert policy_violations(files) == []
 
 
-def test_named_manifest_path_list_rejects_prose_or_unsafe_paths() -> None:
+def test_gate_3_placeholders_cannot_hide_payloads_or_move_into_nested_paths() -> None:
     files = {
-        "manifests/pilot-approved-paths.txt": (
-            b"../private/book.txt\nThis is copied literary prose.\n"
-        )
+        "manifests/.gitkeep": b"hidden payload\n",
+        "artifacts/README.md": b"# Artifacts\n\nhidden payload\n",
+        "manifests/nested/README.md": b"# Manifests\n\nNo Gate 3 manifest schema is approved.\n",
     }
 
-    assert policy_violations(files) == ["manifests/pilot-approved-paths.txt"]
-
-
-def test_manifest_directory_rejects_unplanned_metadata_formats() -> None:
-    files = {"manifests/pilot.csv": b"sourceId,path\nsynthetic_123,book.txt\n"}
-
-    assert policy_violations(files) == ["manifests/pilot.csv"]
+    assert policy_violations(files) == sorted(files)

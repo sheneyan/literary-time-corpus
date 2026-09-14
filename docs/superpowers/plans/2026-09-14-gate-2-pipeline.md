@@ -269,6 +269,12 @@ checks that reject tracked content under `.local/`, likely ebook source files in
 `releases/`. The checks may inspect `git ls-files`, but must not assume a clean
 working tree.
 
+Because Gate 3 remains closed, the implemented policy is deny-by-default for
+all regular data files under `manifests/`, `artifacts/`, and `releases/`. Only
+exact empty root `.gitkeep` files and fixed root `README.md` placeholders may be
+tracked. Gate 3 must introduce reviewed schema/path allowlists before any
+payload is committed; file extensions alone never open the boundary.
+
 **Step 2: Complete the boundary and docs**
 
 Ignore `.local/`, Python caches, virtual environments, and generated build/test

@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Sequence
 
 from literary_time_corpus.extract import ExtractionError, extract_file
+from literary_time_corpus.io import OutputPathError
 from literary_time_corpus.normalize import NormalizationError, normalize_file
 from literary_time_corpus.report import ReportError, report_file
 from literary_time_corpus.validate import (
@@ -76,11 +77,14 @@ def validate_normalize_paths(input_path: Path, output_path: Path) -> None:
         )
 
     try:
+        resolved_output = output_path.resolve(strict=False)
+    except (OSError, RuntimeError) as error:
+        raise OutputPathError() from error
+
+    try:
         paths_are_same = input_path.samefile(output_path)
     except OSError:
-        paths_are_same = input_path.resolve(strict=False) == output_path.resolve(
-            strict=False
-        )
+        paths_are_same = input_path.resolve(strict=False) == resolved_output
     if paths_are_same:
         raise CommandError(
             "unsafe-output-path", "input and output must refer to different files"
@@ -123,6 +127,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         CommandError,
         ExtractionError,
         NormalizationError,
+        OutputPathError,
         ReportError,
         ReleaseValidationError,
         ValidationInputError,

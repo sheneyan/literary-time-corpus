@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
+from literary_time_corpus.candidate import candidate_record_violations
 from literary_time_corpus.io import write_json_atomic
 
 
@@ -263,6 +264,9 @@ def _collect_violations(
     rights: dict[str, Any],
 ) -> list[str]:
     violations: list[str] = []
+
+    if candidate_record_violations(candidate):
+        violations.append("invalid-candidate-document")
 
     analysis_text = _string(analysis.get("analysisText"))
     carried_analysis_hash = _string(analysis.get("analysisTextSha256"))

@@ -81,7 +81,15 @@ canonical JSON Lines. Identical inputs produce byte-identical outputs. Expected
 input or invariant failures exit `2`; unexpected internal failures exit `1`.
 Both write exactly one JSON error object to stderr with `error.code`,
 `error.message`, and optional `error.details`. A failed command does not create
-or modify its requested output path.
+or modify its requested output path. Output destinations whose parent is
+missing, is not a directory, or otherwise cannot be opened safely return exit
+`2` with `error.code=invalid-output-path`.
+
+Gate 2 keeps `manifests/`, `artifacts/`, and `releases/` closed by default. The
+repository policy permits only exact empty `.gitkeep` files or fixed root
+`README.md` placeholders in those directories. Opening Gate 3 must first add
+reviewed, schema-specific allowlists; a generic JSON/JSONL extension is not
+authorization to track data.
 
 The implemented record and tool versions are:
 

@@ -216,6 +216,31 @@ def test_extract_emits_exact_utf8_offsets_ids_context_and_segmentation(
         assert len(candidate["quoteBefore"].encode("utf-8")) == match_within_excerpt
 
 
+def test_extract_records_exact_contextual_resolution_evidence(
+    run_ltc, tmp_path: Path
+) -> None:
+    document, rows, _output = extract_fixture(run_ltc, tmp_path)
+    analysis_bytes = document["analysisText"].encode("utf-8")
+    expected = {
+        "1:17 a.m.": ("explicit-meridiem", "a.m."),
+        "13:15": ("explicit-24-hour-clock", "13:15"),
+        "noon": ("named-time", "noon"),
+    }
+
+    for matched_text, (method, evidence_text) in expected.items():
+        candidate = candidate_by_text(rows, matched_text)
+        resolution = candidate["contextualResolution"]
+        assert resolution["method"] == method
+        assert resolution["evidenceText"] == evidence_text
+        start = resolution["evidenceStartByte"]
+        end = resolution["evidenceEndByte"]
+        assert analysis_bytes[start:end].decode("utf-8") == evidence_text
+        assert candidate["matchStartByte"] <= start < end <= candidate["matchEndByte"]
+
+    for matched_text in ("5:42", "twenty minutes past four", "about five o'clock"):
+        assert candidate_by_text(rows, matched_text)["contextualResolution"] is None
+
+
 def test_extract_is_byte_deterministic(run_ltc, tmp_path: Path) -> None:
     normalized = normalized_fixture(run_ltc, tmp_path)
     first = tmp_path / "first.jsonl"

@@ -203,6 +203,11 @@ NEGATIVE_CASES = [
 
 
 REQUIRED_FIELD_CASES = [
+    ("candidate", "ruleFamily", _DELETE, "invalid-candidate-document"),
+    ("candidate", "ruleId", _DELETE, "invalid-candidate-document"),
+    ("candidate", "context", _DELETE, "invalid-candidate-document"),
+    ("candidate", "sourceHashStatus", _DELETE, "invalid-candidate-document"),
+    ("candidate", "contextualResolution", _DELETE, "invalid-candidate-document"),
     ("candidate", "status", _DELETE, "invalid-candidate-document"),
     ("candidate", "status", "", "invalid-candidate-document"),
     ("candidate", "exclusionReasonCodes", _DELETE, "invalid-candidate-document"),
@@ -240,6 +245,33 @@ REQUIRED_FIELD_CASES = [
     ("rights", "assessments.0.reviewer", "", "incomplete-jurisdiction-assessment"),
     ("rights", "assessments.1.decisionDate", "", "incomplete-jurisdiction-assessment"),
 ]
+
+
+@pytest.mark.parametrize(
+    ("path", "value"),
+    [
+        ("normalizationVersion", "normalize-v999"),
+        ("extractionVersion", "extract-v999"),
+        ("ruleFamily", ""),
+        ("ruleId", ""),
+        ("context", "spoofed context"),
+        ("sourceHashStatus", "verified-from-source"),
+        ("contextualResolution.method", "named-time"),
+        ("contextualResolution.evidenceText", "p.m."),
+    ],
+)
+def test_validate_reuses_complete_candidate_shape_validation(
+    run_ltc, tmp_path: Path, path: str, value: Any
+) -> None:
+    candidate = mutate_fixture(
+        "candidate.json", lambda document: set_path(document, path, value)
+    )
+
+    result, output = run_validate(run_ltc, tmp_path, candidate=candidate)
+
+    assert result.returncode == 2
+    assert not output.exists()
+    assert "invalid-candidate-document" in stderr_error(result)["details"]["violations"]
 
 
 @pytest.mark.parametrize(
@@ -301,6 +333,7 @@ def test_validate_reports_all_violations_in_stable_sorted_order(run_ltc, tmp_pat
     assert result.returncode == 2
     assert not output.exists()
     assert stderr_error(result)["details"]["violations"] == [
+        "invalid-candidate-document",
         "normalized-time-count",
         "precision-not-resolved",
         "review-confirmed-time-mismatch",

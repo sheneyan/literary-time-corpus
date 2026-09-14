@@ -136,6 +136,7 @@ def _candidate(
     status: str = "detected",
     exclusions: list[str] | None = None,
     warnings: list[str] | None = None,
+    contextual_resolution: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     analysis = document["analysisText"]
     match_start = _byte_offset(analysis, match.start())
@@ -160,6 +161,7 @@ def _candidate(
         "analysisTextSha256": document["analysisTextSha256"],
         "candidateId": hashlib.sha256(identity.encode("utf-8")).hexdigest(),
         "context": excerpt,
+        "contextualResolution": contextual_resolution,
         "excerpt": excerpt,
         "excerptEndByte": excerpt_end,
         "excerptStartByte": excerpt_start,
@@ -246,6 +248,8 @@ def extract_candidates(document: dict[str, Any]) -> list[dict[str, Any]]:
         hour = int(match.group(1)) % 12
         if match.group(3).lower() == "p":
             hour += 12
+        evidence = re.search(r"[ap]\.?m\.?$", match.group(0), re.IGNORECASE)
+        assert evidence is not None
         return _candidate(
             document,
             match,
@@ -253,6 +257,12 @@ def extract_candidates(document: dict[str, Any]) -> list[dict[str, Any]]:
             rule_id="numeric-12h-meridiem-v1",
             normalized_times=[_clock(hour, int(match.group(2)))],
             precision="exact-minute-resolved",
+            contextual_resolution={
+                "evidenceEndByte": _byte_offset(text, match.start() + evidence.end()),
+                "evidenceStartByte": _byte_offset(text, match.start() + evidence.start()),
+                "evidenceText": evidence.group(0),
+                "method": "explicit-meridiem",
+            },
         )
 
     add_matches(numeric_meridiem, build_meridiem)
@@ -315,6 +325,12 @@ def extract_candidates(document: dict[str, Any]) -> list[dict[str, Any]]:
             rule_id="named-noon-midnight-v1",
             normalized_times=["12:00" if match.group(1).lower() == "noon" else "00:00"],
             precision="exact-minute-resolved",
+            contextual_resolution={
+                "evidenceEndByte": _byte_offset(text, match.end()),
+                "evidenceStartByte": _byte_offset(text, match.start()),
+                "evidenceText": match.group(0),
+                "method": "named-time",
+            },
         ),
     )
 
@@ -347,6 +363,12 @@ def extract_candidates(document: dict[str, Any]) -> list[dict[str, Any]]:
                 rule_id="numeric-24h-v1",
                 normalized_times=[_clock(hour, minute)],
                 precision="exact-minute-resolved",
+                contextual_resolution={
+                    "evidenceEndByte": _byte_offset(text, match.end()),
+                    "evidenceStartByte": _byte_offset(text, match.start()),
+                    "evidenceText": match.group(0),
+                    "method": "explicit-24-hour-clock",
+                },
             )
         if hour == 0:
             return _candidate(
@@ -356,6 +378,12 @@ def extract_candidates(document: dict[str, Any]) -> list[dict[str, Any]]:
                 rule_id="numeric-24h-v1",
                 normalized_times=[_clock(hour, minute)],
                 precision="exact-minute-resolved",
+                contextual_resolution={
+                    "evidenceEndByte": _byte_offset(text, match.end()),
+                    "evidenceStartByte": _byte_offset(text, match.start()),
+                    "evidenceText": match.group(0),
+                    "method": "explicit-24-hour-clock",
+                },
             )
         return _candidate(
             document,

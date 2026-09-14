@@ -7,6 +7,12 @@ from pathlib import Path
 from typing import Any, Iterable
 
 
+class OutputPathError(ValueError):
+    def __init__(self) -> None:
+        super().__init__("could not write output path")
+        self.code = "invalid-output-path"
+
+
 def canonical_json_bytes(value: Any) -> bytes:
     return (
         json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
@@ -15,10 +21,13 @@ def canonical_json_bytes(value: Any) -> bytes:
 
 
 def write_bytes_atomic(path: Path, chunks: Iterable[bytes]) -> None:
-    parent = path.parent.resolve()
-    destination_name = path.name
-    directory_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
-    directory_descriptor = os.open(parent, directory_flags)
+    try:
+        parent = path.parent.resolve()
+        destination_name = path.name
+        directory_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+        directory_descriptor = os.open(parent, directory_flags)
+    except OSError as error:
+        raise OutputPathError() from error
     temporary_name: str | None = None
     try:
         while temporary_name is None:
@@ -39,13 +48,18 @@ def write_bytes_atomic(path: Path, chunks: Iterable[bytes]) -> None:
                 temporary.write(chunk)
             temporary.flush()
             os.fsync(temporary.fileno())
-        os.replace(
-            temporary_name,
-            destination_name,
-            src_dir_fd=directory_descriptor,
-            dst_dir_fd=directory_descriptor,
-        )
+        try:
+            os.replace(
+                temporary_name,
+                destination_name,
+                src_dir_fd=directory_descriptor,
+                dst_dir_fd=directory_descriptor,
+            )
+        except OSError as error:
+            raise OutputPathError() from error
         temporary_name = None
+    except OSError as error:
+        raise OutputPathError() from error
     finally:
         if temporary_name is not None:
             try:

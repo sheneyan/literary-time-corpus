@@ -7,7 +7,7 @@ import pytest
 
 
 FIXTURE = Path(__file__).parent / "fixtures" / "report" / "candidates.jsonl"
-FIXTURE_SHA256 = "dad160f4bbdc71ab9b95b5143d5acc58196e863db49aa9a3425e7598787d36d7"
+FIXTURE_SHA256 = "0a1e9c8b86585d6bbeddabd40df7d58e484d35e90f91706c6a0eb2afe934ab3b"
 
 
 def first_candidate() -> dict[str, object]:
@@ -104,6 +104,40 @@ def test_report_malformed_jsonl_preserves_existing_output(run_ltc, tmp_path: Pat
     assert error["error"]["code"] == "invalid-candidate-jsonl"
     assert error["error"]["details"] == {"line": 2}
     assert output.read_bytes() == b"keep this exact output\n"
+
+
+@pytest.mark.parametrize(
+    "shape", ["missing-parent", "non-directory-parent", "symlink-loop-parent"]
+)
+def test_report_invalid_output_path_is_structured_and_preserves_existing_data(
+    run_ltc, tmp_path: Path, shape: str
+) -> None:
+    preserved = tmp_path / "preserved.json"
+    preserved.write_bytes(b"keep this exact output\n")
+    if shape == "missing-parent":
+        output = tmp_path / "missing" / "report.json"
+    elif shape == "non-directory-parent":
+        parent = tmp_path / "not-a-directory"
+        parent.write_bytes(b"keep this parent file\n")
+        output = parent / "report.json"
+    else:
+        parent = tmp_path / "loop"
+        parent.symlink_to(parent)
+        output = parent / "report.json"
+
+    result = run_ltc("report", "--input", FIXTURE, "--output", output)
+
+    assert result.returncode == 2
+    assert json.loads(result.stderr)["error"] == {
+        "code": "invalid-output-path",
+        "message": "could not write output path",
+    }
+    assert preserved.read_bytes() == b"keep this exact output\n"
+    assert not output.exists()
+    if shape == "non-directory-parent":
+        assert output.parent.read_bytes() == b"keep this parent file\n"
+    elif shape == "symlink-loop-parent":
+        assert output.parent.is_symlink()
 
 
 def test_report_rejects_inconsistent_schema_versions_without_overwriting(

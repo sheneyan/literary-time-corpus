@@ -75,5 +75,14 @@ def normalize_file(input_path: Path, output_path: Path) -> None:
         "schemaVersion": SCHEMA_VERSION,
         "sourceId": f"synthetic_{source_hash[:12]}",
         "sourceSha256": source_hash,
+        "transformationLog": [
+            {
+                "inputEndByte": body_end,
+                "inputStartByte": body_start,
+                "method": "project-gutenberg-marker-body-selection",
+                "outputEndByte": len(analysis),
+                "outputStartByte": 0,
+            }
+        ],
     }
     write_json_atomic(output_path, document)
