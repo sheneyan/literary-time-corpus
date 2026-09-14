@@ -102,16 +102,29 @@ versions and records the schema of the copied work metadata.
 `artifactDigests` has exactly the four named entries shown above and hashes the
 final bytes of each artifact. `run.json` cannot and does not digest itself.
 
-Before publishing the staging directory, scan re-reads all five files. It
-validates the normalized record and every candidate through the shared
-validators; regenerates and compares the report, including its candidate-input
-hash and counts; recomputes the four artifact digests; and regenerates the
-expected Markdown bytes from the validated candidates and manifest metadata.
+Immediately before publishing the staging directory, scan re-reads all five
+files as regular, non-symbolic-link files and captures each device, inode, and
+byte size. Starting from the original source bytes, marker options, and work
+metadata, it regenerates the normalized record and candidates and requires
+their exact canonical bytes. It then regenerates the report, including its
+candidate-input hash and counts, and regenerates the expected Markdown bytes.
 The deterministic renderer rejects duplicate candidate IDs and emits each
 candidate exactly once, while an incidental `Candidate ID:` phrase inside
-source context remains ordinary source text. Any byte mismatch fails with
-`scan-verification-failed` at the `verification` stage, and the destination is
-not published.
+source context remains ordinary source text. Scan also recomputes the four
+artifact digests. The raw `run.json` bytes must exactly equal the canonical JSON
+serialization of the expected manifest; semantically equal pretty JSON and
+numeric substitutions such as `1.0` for an integer are invalid.
+
+After renaming a new scan directory into place, scan repeats the complete
+verification and requires the captured artifact identities to be unchanged.
+If that post-publication check fails, it removes only the directory whose
+device and inode identify the directory created by that invocation, and reports
+`scan-verification-failed` at the `verification` stage instead of success. The
+identity-checked cleanup boundary is reusable by guarded replacement, where an
+older directory may need restoration. These checks close the
+program-controlled publication window; they cannot cryptographically prevent a
+same-user process from modifying an artifact after scan has successfully
+exited.
 
 The manifest contains no current working directory, absolute path, username,
 hostname, staging name, timestamp, locale, timezone, or environment value.

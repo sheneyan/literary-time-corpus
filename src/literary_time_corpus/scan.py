@@ -20,7 +20,11 @@ from literary_time_corpus.candidate import (
     work_metadata_violations,
 )
 from literary_time_corpus.extract import ExtractionError, extract_candidates
-from literary_time_corpus.io import write_json_atomic, write_jsonl_atomic
+from literary_time_corpus.io import (
+    canonical_json_bytes,
+    write_json_atomic,
+    write_jsonl_atomic,
+)
 from literary_time_corpus.normalize import NormalizationError, normalize_bytes
 from literary_time_corpus.normalized import (
     NORMALIZATION_VERSION,
@@ -46,6 +50,8 @@ ARTIFACT_NAMES = (
     "run.json",
 )
 DIGESTED_ARTIFACT_NAMES = ARTIFACT_NAMES[:-1]
+ArtifactIdentity = tuple[int, int, int]
+DirectoryIdentity = tuple[int, int]
 INVALID_PERCENT_ESCAPE = re.compile(r"%(?![0-9A-Fa-f]{2})")
 HOST_LABEL = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?")
 HAZARDOUS_DIRECTIONAL_CONTROLS = frozenset(
@@ -204,6 +210,70 @@ def artifact_digest(path: Path) -> dict[str, object]:
     }
 
 
+def _bytes_digest(content: bytes) -> dict[str, object]:
+    return {
+        "byteSize": len(content),
+        "sha256": hashlib.sha256(content).hexdigest(),
+    }
+
+
+def _read_regular_artifact(path: Path) -> tuple[bytes, ArtifactIdentity]:
+    descriptor: int | None = None
+    try:
+        path_status = path.lstat()
+        if not stat.S_ISREG(path_status.st_mode):
+            raise _verification_failed()
+        descriptor = os.open(
+            path,
+            os.O_RDONLY | os.O_NONBLOCK | getattr(os, "O_NOFOLLOW", 0),
+        )
+        before = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(before.st_mode)
+            or (path_status.st_dev, path_status.st_ino)
+            != (before.st_dev, before.st_ino)
+        ):
+            raise _verification_failed()
+        with os.fdopen(descriptor, "rb", closefd=False) as artifact:
+            content = artifact.read()
+        after = os.fstat(descriptor)
+        identity = (before.st_dev, before.st_ino, before.st_size)
+        if (
+            identity != (after.st_dev, after.st_ino, after.st_size)
+            or len(content) != before.st_size
+        ):
+            raise _verification_failed()
+        return content, identity
+    except ScanError:
+        raise
+    except OSError:
+        raise _verification_failed() from None
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+
+
+def _directory_identity(path: Path) -> DirectoryIdentity:
+    try:
+        status = path.lstat()
+    except OSError:
+        raise _verification_failed() from None
+    if not stat.S_ISDIR(status.st_mode):
+        raise _verification_failed()
+    return status.st_dev, status.st_ino
+
+
+def _remove_directory_if_identity_matches(
+    path: Path,
+    expected_identity: DirectoryIdentity,
+) -> None:
+    try:
+        if _directory_identity(path) == expected_identity:
+            shutil.rmtree(path)
+    except (OSError, ScanError):
+        return
+
+
 def build_run_manifest(
     *,
     source: bytes,
@@ -266,26 +336,78 @@ def build_run_manifest(
 def _verify_staging(
     staging_path: Path,
     expected_run: dict[str, object],
-) -> None:
+    *,
+    source: bytes,
+    work_metadata: dict[str, object],
+    start_marker: str | None,
+    end_marker: str | None,
+    expected_identities: dict[str, ArtifactIdentity] | None = None,
+) -> dict[str, ArtifactIdentity]:
     try:
-        normalized = json.loads((staging_path / "normalized.json").read_bytes())
-        candidate_bytes = (staging_path / "candidates.jsonl").read_bytes()
+        if {path.name for path in staging_path.iterdir()} != set(ARTIFACT_NAMES):
+            raise _verification_failed()
+        artifact_reads = {
+            name: _read_regular_artifact(staging_path / name)
+            for name in ARTIFACT_NAMES
+        }
+        artifact_bytes = {
+            name: content for name, (content, _) in artifact_reads.items()
+        }
+        identities = {
+            name: identity for name, (_, identity) in artifact_reads.items()
+        }
+        normalized = json.loads(artifact_bytes["normalized.json"])
+        candidate_bytes = artifact_bytes["candidates.jsonl"]
         candidates = [json.loads(line) for line in candidate_bytes.splitlines()]
-        report = json.loads((staging_path / "report.json").read_bytes())
-        review = (staging_path / "review.md").read_bytes()
-        run = json.loads((staging_path / "run.json").read_bytes())
+        report = json.loads(artifact_bytes["report.json"])
+        run = json.loads(artifact_bytes["run.json"])
+        regenerated_normalized = normalize_bytes(
+            source,
+            start_marker=start_marker,
+            end_marker=end_marker,
+        )
+        regenerated_candidates = extract_candidates(
+            regenerated_normalized,
+            work_metadata,
+        )
         regenerated_report = build_report(staging_path / "candidates.jsonl")
         digests = {
-            name: artifact_digest(staging_path / name)
+            name: _bytes_digest(artifact_bytes[name])
             for name in DIGESTED_ARTIFACT_NAMES
         }
-    except (OSError, UnicodeError, json.JSONDecodeError, ReportError, TypeError):
+        report_candidate_identity = _read_regular_artifact(
+            staging_path / "candidates.jsonl"
+        )[1]
+    except (
+        ExtractionError,
+        NormalizationError,
+        OSError,
+        UnicodeError,
+        json.JSONDecodeError,
+        ReportError,
+        TypeError,
+    ):
         raise _verification_failed() from None
 
     if (
-        run != expected_run
+        (expected_identities is not None and identities != expected_identities)
+        or report_candidate_identity != identities["candidates.jsonl"]
+        or artifact_bytes["run.json"] != canonical_json_bytes(expected_run)
+        or run != expected_run
         or normalized_record_violations(normalized)
         or any(candidate_record_violations(candidate) for candidate in candidates)
+        or normalized_record_violations(regenerated_normalized)
+        or any(
+            candidate_record_violations(candidate)
+            for candidate in regenerated_candidates
+        )
+        or artifact_bytes["normalized.json"]
+        != canonical_json_bytes(regenerated_normalized)
+        or candidate_bytes
+        != b"".join(
+            canonical_json_bytes(candidate) for candidate in regenerated_candidates
+        )
+        or artifact_bytes["report.json"] != canonical_json_bytes(regenerated_report)
         or report != regenerated_report
         or run.get("artifactDigests") != digests
     ):
@@ -314,7 +436,7 @@ def _verify_staging(
         if candidate["precision"] == "exact-minute-resolved"
     }
     try:
-        expected_review = render_review_markdown(candidates, metadata)
+        expected_review = render_review_markdown(regenerated_candidates, metadata)
     except (TypeError, ValueError):
         raise _verification_failed() from None
     if (
@@ -324,9 +446,10 @@ def _verify_staging(
         or report.get("resolvedMinuteCount") != len(resolved_minutes)
         or run.get("candidateCount") != len(candidates)
         or run.get("resolvedMinuteCount") != len(resolved_minutes)
-        or review != expected_review
+        or artifact_bytes["review.md"] != expected_review
     ):
         raise _verification_failed()
+    return identities
 
 
 def scan_to_staging(
@@ -336,7 +459,7 @@ def scan_to_staging(
     work_metadata: dict[str, object],
     start_marker: str | None,
     end_marker: str | None,
-) -> dict[str, object]:
+) -> tuple[dict[str, object], bytes, dict[str, object]]:
     source = _read_regular_file(input_path)
     try:
         document = normalize_bytes(
@@ -393,11 +516,14 @@ def scan_to_staging(
     except OSError:
         raise _verification_failed() from None
     write_json_atomic(staging_path / "run.json", run)
-    _verify_staging(staging_path, run)
-    return {
-        "candidateCount": report["candidateCount"],
-        "resolvedMinuteCount": report["resolvedMinuteCount"],
-    }
+    return (
+        {
+            "candidateCount": report["candidateCount"],
+            "resolvedMinuteCount": report["resolvedMinuteCount"],
+        },
+        source,
+        run,
+    )
 
 
 def scan_file(
@@ -436,21 +562,26 @@ def scan_file(
             "could not create output directory",
             stage="publication",
         ) from error
+    created_directory_identity = _directory_identity(staging_path)
 
     try:
-        counts = scan_to_staging(
+        counts, source, run = scan_to_staging(
             input_path,
             staging_path,
             work_metadata=metadata,
             start_marker=start_marker,
             end_marker=end_marker,
         )
-        if {path.name for path in staging_path.iterdir()} != set(ARTIFACT_NAMES):
-            raise ScanError(
-                "scan-verification-failed",
-                "scan artifact inventory is incomplete",
-                stage="verification",
-            )
+        artifact_identities = _verify_staging(
+            staging_path,
+            run,
+            source=source,
+            work_metadata=metadata,
+            start_marker=start_marker,
+            end_marker=end_marker,
+        )
+        if _directory_identity(staging_path) != created_directory_identity:
+            raise _verification_failed()
         try:
             staging_path.rename(output_path)
         except OSError as error:
@@ -459,6 +590,24 @@ def scan_file(
                 "could not publish output directory",
                 stage="publication",
             ) from error
+        try:
+            if _directory_identity(output_path) != created_directory_identity:
+                raise _verification_failed()
+            _verify_staging(
+                output_path,
+                run,
+                source=source,
+                work_metadata=metadata,
+                start_marker=start_marker,
+                end_marker=end_marker,
+                expected_identities=artifact_identities,
+            )
+        except ScanError:
+            _remove_directory_if_identity_matches(
+                output_path,
+                created_directory_identity,
+            )
+            raise
         return {
             "candidateCount": counts["candidateCount"],
             "outputName": output_path.name,
@@ -466,5 +615,7 @@ def scan_file(
             "status": "complete",
         }
     finally:
-        if staging_path.exists():
-            shutil.rmtree(staging_path)
+        _remove_directory_if_identity_matches(
+            staging_path,
+            created_directory_identity,
+        )

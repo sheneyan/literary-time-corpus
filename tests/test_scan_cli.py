@@ -423,14 +423,18 @@ def test_scan_rejects_tampered_staged_review_without_publishing(
     source.write_text("The bell rang at 13:15.\n", encoding="utf-8")
     verify_staging = scan_module._verify_staging
 
-    def tamper_then_verify(staging_path: Path, expected_run: dict[str, object]) -> None:
+    def tamper_then_verify(
+        staging_path: Path,
+        expected_run: dict[str, object],
+        **verification_inputs,
+    ) -> None:
         review_path = staging_path / "review.md"
         review_path.write_bytes(review_path.read_bytes() + b"tampered\n")
         artifact_digests = expected_run["artifactDigests"]
         assert isinstance(artifact_digests, dict)
         artifact_digests["review.md"] = scan_module.artifact_digest(review_path)
         scan_module.write_json_atomic(staging_path / "run.json", expected_run)
-        verify_staging(staging_path, expected_run)
+        verify_staging(staging_path, expected_run, **verification_inputs)
 
     monkeypatch.setattr(scan_module, "_verify_staging", tamper_then_verify)
 
@@ -443,6 +447,207 @@ def test_scan_rejects_tampered_staged_review_without_publishing(
     assert error["code"] == "scan-verification-failed"
     assert error["details"] == {"stage": "verification"}
     assert not destination.exists()
+
+
+def test_scan_rejects_coherent_artifacts_not_regenerated_from_source(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    source = tmp_path / "book.txt"
+    destination = tmp_path / "scan"
+    source_bytes = b"At 13:15 the first bell rang.\n"
+    source.write_bytes(source_bytes)
+    normalize = scan_module.normalize_bytes
+    forged = normalize(b"At 14:45 another bell rang.\n")
+    source_sha256 = hashlib.sha256(source_bytes).hexdigest()
+    forged["sourceSha256"] = source_sha256
+    forged["sourceId"] = f"local_{source_sha256[:12]}"
+    call_count = 0
+
+    def forge_first_normalization(*args, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return forged
+        return normalize(*args, **kwargs)
+
+    monkeypatch.setattr(scan_module, "normalize_bytes", forge_first_normalization)
+
+    exit_code = main(["scan", str(source), "--output", str(destination)])
+    captured = capsys.readouterr()
+
+    assert exit_code == 2
+    assert captured.out == ""
+    error = json.loads(captured.err)["error"]
+    assert error["code"] == "scan-verification-failed"
+    assert error["details"] == {"stage": "verification"}
+    assert not destination.exists()
+
+
+@pytest.mark.parametrize("mutation", ["pretty", "float-count"])
+def test_scan_rejects_noncanonical_run_json_without_publishing(
+    tmp_path: Path, monkeypatch, capsys, mutation: str
+) -> None:
+    source = tmp_path / "book.txt"
+    destination = tmp_path / "scan"
+    source.write_text("The bell rang at 13:15.\n", encoding="utf-8")
+    verify_staging = scan_module._verify_staging
+
+    def mutate_then_verify(
+        staging_path: Path,
+        expected_run: dict[str, object],
+        **verification_inputs,
+    ) -> object:
+        altered = dict(expected_run)
+        if mutation == "float-count":
+            altered["candidateCount"] = 1.0
+            content = json.dumps(
+                altered,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ) + "\n"
+        else:
+            content = json.dumps(altered, ensure_ascii=False, indent=2) + "\n"
+        (staging_path / "run.json").write_text(content, encoding="utf-8")
+        return verify_staging(staging_path, expected_run, **verification_inputs)
+
+    monkeypatch.setattr(scan_module, "_verify_staging", mutate_then_verify)
+
+    exit_code = main(["scan", str(source), "--output", str(destination)])
+    captured = capsys.readouterr()
+
+    assert exit_code == 2
+    assert captured.out == ""
+    error = json.loads(captured.err)["error"]
+    assert error["code"] == "scan-verification-failed"
+    assert error["details"] == {"stage": "verification"}
+    assert not destination.exists()
+
+
+def test_scan_rejects_symlinked_staged_artifact_without_publishing(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    source = tmp_path / "book.txt"
+    destination = tmp_path / "scan"
+    source.write_text("The bell rang at 13:15.\n", encoding="utf-8")
+    verify_staging = scan_module._verify_staging
+
+    def symlink_then_verify(
+        staging_path: Path,
+        expected_run: dict[str, object],
+        **verification_inputs,
+    ) -> object:
+        review_path = staging_path / "review.md"
+        external_review = tmp_path / "external-review.md"
+        external_review.write_bytes(review_path.read_bytes())
+        review_path.unlink()
+        review_path.symlink_to(external_review)
+        return verify_staging(staging_path, expected_run, **verification_inputs)
+
+    monkeypatch.setattr(scan_module, "_verify_staging", symlink_then_verify)
+
+    exit_code = main(["scan", str(source), "--output", str(destination)])
+    captured = capsys.readouterr()
+
+    assert exit_code == 2
+    assert captured.out == ""
+    error = json.loads(captured.err)["error"]
+    assert error["code"] == "scan-verification-failed"
+    assert error["details"] == {"stage": "verification"}
+    assert not destination.exists()
+
+
+def test_scan_reverifies_after_publish_and_removes_corrupt_created_directory(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    source = tmp_path / "book.txt"
+    destination = tmp_path / "scan"
+    source.write_text("The bell rang at 13:15.\n", encoding="utf-8")
+    verify_staging = scan_module._verify_staging
+    call_count = 0
+
+    def mutate_after_first_verification(
+        artifact_directory: Path,
+        expected_run: dict[str, object],
+        **verification_inputs,
+    ) -> object:
+        nonlocal call_count
+        call_count += 1
+        result = verify_staging(
+            artifact_directory,
+            expected_run,
+            **verification_inputs,
+        )
+        if call_count == 1:
+            review_path = artifact_directory / "review.md"
+            review_path.write_bytes(review_path.read_bytes() + b"corrupt\n")
+        return result
+
+    monkeypatch.setattr(
+        scan_module,
+        "_verify_staging",
+        mutate_after_first_verification,
+    )
+
+    exit_code = main(["scan", str(source), "--output", str(destination)])
+    captured = capsys.readouterr()
+
+    assert call_count == 2
+    assert exit_code == 2
+    assert captured.out == ""
+    error = json.loads(captured.err)["error"]
+    assert error["code"] == "scan-verification-failed"
+    assert error["details"] == {"stage": "verification"}
+    assert not destination.exists()
+
+
+def test_scan_does_not_remove_replacement_of_its_created_staging_directory(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    source = tmp_path / "book.txt"
+    destination = tmp_path / "scan"
+    source.write_text("The bell rang at 13:15.\n", encoding="utf-8")
+    verify_staging = scan_module._verify_staging
+    replacement_paths: list[Path] = []
+
+    def replace_after_first_verification(
+        artifact_directory: Path,
+        expected_run: dict[str, object],
+        **verification_inputs,
+    ) -> object:
+        result = verify_staging(
+            artifact_directory,
+            expected_run,
+            **verification_inputs,
+        )
+        if not replacement_paths:
+            original = tmp_path / "displaced-original"
+            artifact_directory.rename(original)
+            artifact_directory.mkdir()
+            (artifact_directory / "unrelated.txt").write_text(
+                "keep",
+                encoding="utf-8",
+            )
+            replacement_paths.append(artifact_directory)
+        return result
+
+    monkeypatch.setattr(
+        scan_module,
+        "_verify_staging",
+        replace_after_first_verification,
+    )
+
+    exit_code = main(["scan", str(source), "--output", str(destination)])
+    captured = capsys.readouterr()
+
+    assert exit_code == 2
+    assert captured.out == ""
+    error = json.loads(captured.err)["error"]
+    assert error["code"] == "scan-verification-failed"
+    assert error["details"] == {"stage": "verification"}
+    assert not destination.exists()
+    assert len(replacement_paths) == 1
+    assert (replacement_paths[0] / "unrelated.txt").read_text() == "keep"
 
 
 def test_scan_review_renders_all_empty_sections(run_ltc, tmp_path: Path) -> None:
