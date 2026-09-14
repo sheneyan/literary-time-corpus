@@ -881,6 +881,35 @@ def test_scan_retains_staging_when_initial_identity_snapshot_fails(
     assert not destination.exists()
 
 
+def test_scan_unexpected_staging_failure_exits_one_with_retention_details(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    source = tmp_path / "private-book.txt"
+    destination = tmp_path / "scan"
+    private_text = "private source text at 13:15"
+    source.write_text(private_text, encoding="utf-8")
+
+    def raise_unexpected(*args, **kwargs):
+        raise RuntimeError("private internal sentinel")
+
+    monkeypatch.setattr(scan_module, "normalize_bytes", raise_unexpected)
+
+    exit_code = main(["scan", str(source), "--output", str(destination)])
+    captured = capsys.readouterr()
+
+    assert exit_code == 1
+    assert captured.out == ""
+    error = json.loads(captured.err)["error"]
+    assert error["code"] == "internal-generation-failed"
+    assert error["message"] == "scan generation failed"
+    assert_retained_failure_details(error, tmp_path, stage="staging")
+    assert "private internal sentinel" not in captured.err
+    assert private_text not in captured.err
+    assert str(source) not in captured.err
+    assert "Traceback" not in captured.err
+    assert not destination.exists()
+
+
 def test_successful_scan_leaves_no_staging_or_quarantine_directory(
     run_ltc, tmp_path: Path
 ) -> None:

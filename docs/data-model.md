@@ -142,8 +142,10 @@ step share one exception boundary. Any ordinary `Exception` after staging is
 created therefore attempts the same retention protocol. Controlled scan errors
 keep their existing code and stage; an escaped output-write error keeps its
 domain code and uses stage `staging`; other unexpected generation exceptions
-become `internal-generation-failed` at stage `staging`. `KeyboardInterrupt` and
-`SystemExit` are not caught by this boundary.
+become `internal-generation-failed` at stage `staging` and exit `1`, while all
+controlled scan errors retain exit `2`. Both categories preserve quarantine
+basename/status details. `KeyboardInterrupt` and `SystemExit` are not caught by
+this boundary.
 
 If the quarantine cannot be created or the atomic move fails, scan returns the
 distinct `scan-cleanup-failed` error at stage `cleanup`, never reports success,

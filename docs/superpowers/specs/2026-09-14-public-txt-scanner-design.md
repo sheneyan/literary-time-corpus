@@ -158,8 +158,9 @@ The ownership snapshot and all staged artifact generation, write, build,
 verification, and publication operations are inside the same ordinary-exception
 boundary. Every such failure attempts retention and reports the retained
 basename/status. Controlled domain errors preserve their code and stage;
-unexpected exceptions use `internal-generation-failed` with stage `staging`.
-The boundary does not catch `KeyboardInterrupt` or `SystemExit`.
+unexpected exceptions use `internal-generation-failed` with stage `staging`
+and exit `1`, while controlled scan errors exit `2`. The boundary does not
+catch `KeyboardInterrupt` or `SystemExit`.
 
 Expected failures exit `2`; unexpected internal failures exit `1`. Errors use
 the existing single-object JSON stderr envelope and add the failed stage to

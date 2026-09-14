@@ -66,10 +66,18 @@ HAZARDOUS_DIRECTIONAL_CONTROLS = frozenset(
 
 
 class ScanError(ValueError):
-    def __init__(self, code: str, message: str, *, stage: str):
+    def __init__(
+        self,
+        code: str,
+        message: str,
+        *,
+        stage: str,
+        exit_code: int = 2,
+    ):
         super().__init__(message)
         self.code = code
         self.details = {"stage": stage}
+        self.exit_code = exit_code
 
 
 def _invalid_metadata() -> ScanError:
@@ -354,6 +362,7 @@ def _staging_failure(error: Exception) -> ScanError:
         "internal-generation-failed",
         "scan generation failed",
         stage="staging",
+        exit_code=1,
     )
 
 

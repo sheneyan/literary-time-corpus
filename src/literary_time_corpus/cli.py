@@ -173,6 +173,13 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
             return 0
         raise CommandError("not-implemented", f"{arguments.command} is not implemented")
+    except ScanError as error:
+        return write_error(
+            error.code,
+            str(error),
+            exit_code=error.exit_code,
+            details=error.details,
+        )
     except (
         CommandError,
         ExtractionError,
@@ -180,7 +187,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         OutputPathError,
         ReportError,
         ReleaseValidationError,
-        ScanError,
         ValidationInputError,
     ) as error:
         return write_error(
