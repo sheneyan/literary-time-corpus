@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import getpass
 import hashlib
-import html
 import json
 import re
 import socket
@@ -10,6 +9,8 @@ from pathlib import Path
 
 import pytest
 
+import literary_time_corpus.scan as scan_module
+from literary_time_corpus.cli import main
 from literary_time_corpus.review import render_review_markdown
 
 
@@ -473,7 +474,7 @@ def test_review_renderer_uses_bounded_alternate_fence_for_long_backtick_run(
     assert read_rows(destination)[0]["context"] == original["context"]
 
 
-def test_review_renderer_falls_back_when_both_fence_delimiters_are_too_long(
+def test_review_renderer_rejects_when_both_fence_delimiters_are_too_long(
     run_ltc, tmp_path: Path
 ) -> None:
     source = tmp_path / "book.txt"
@@ -486,78 +487,78 @@ def test_review_renderer_falls_back_when_both_fence_delimiters_are_too_long(
     metadata = candidate["workMetadata"]
     assert isinstance(metadata, dict)
 
-    review = render_review_markdown([candidate], metadata).decode("utf-8")
-
-    expected_block = (
-        f"<pre><code>{html.escape(str(candidate['context']), quote=False)}"
-        "</code></pre>"
-    )
-    assert expected_block in review
-    assert "<h1>injected</h1>" not in review
-    assert "`" * 256 not in review
-    assert "~" * 256 not in review
-    assert read_rows(destination)[0]["context"] == original["context"]
+    with pytest.raises(ValueError, match="safe Markdown fence"):
+        render_review_markdown([candidate], metadata)
 
 
-def test_review_html_fallback_preserves_non_markdown_separators(
-    run_ltc, tmp_path: Path
+@pytest.mark.parametrize(
+    ("long_delimiter", "short_delimiter", "expected_fence"),
+    [
+        ("`", "~", "~~~text"),
+        ("~", "`", "```text"),
+    ],
+)
+def test_review_uses_bounded_fence_and_preserves_boundary_newlines(
+    run_ltc,
+    tmp_path: Path,
+    long_delimiter: str,
+    short_delimiter: str,
+    expected_fence: str,
 ) -> None:
     source = tmp_path / "book.txt"
     destination = tmp_path / "scan"
     source.write_text("The bell rang at 13:15.\n", encoding="utf-8")
     assert run_ltc("scan", source, "--output", destination).returncode == 0
     original = read_rows(destination)[0]
-    backticks = "`" * 255
-    tildes = "~" * 255
     non_markdown_separators = "\u0085\v\f\u2028\u2029"
     context_before = (
-        f"{backticks}\r\n{tildes}\rbefore{non_markdown_separators}"
-        "# preserved\n# injected\n"
+        "\r\n\n"
+        + long_delimiter * 255
+        + f"\r{short_delimiter * 2}before{non_markdown_separators}\n"
     )
-    candidate = candidate_with_context(original, context_before)
-    metadata = candidate["workMetadata"]
-    assert isinstance(metadata, dict)
-
-    review = render_review_markdown([candidate], metadata).decode("utf-8")
-
-    escaped_context = html.escape(str(candidate["context"]), quote=False)
-    assert f"<pre><code>{escaped_context}</code></pre>" in review
-    assert html.unescape(escaped_context) == candidate["context"]
-    assert read_rows(destination)[0]["context"] == original["context"]
-
-
-def test_review_html_fallback_preserves_boundary_newlines_and_blocks_injection(
-    run_ltc, tmp_path: Path
-) -> None:
-    source = tmp_path / "book.txt"
-    destination = tmp_path / "scan"
-    source.write_text("The bell rang at 13:15.\n", encoding="utf-8")
-    assert run_ltc("scan", source, "--output", destination).returncode == 0
-    original = read_rows(destination)[0]
-    context_before = (
-        "\r\n\n\r"
-        + "`" * 255
-        + "\n"
-        + "~" * 255
-        + "\n&raw</code></pre><h1>injected</h1>\n"
-    )
-    context_after = "\r\n\n\r\r\n"
+    context_after = "\r\n\n\r"
     candidate = candidate_with_context(original, context_before, context_after)
     metadata = candidate["workMetadata"]
     assert isinstance(metadata, dict)
 
     review = render_review_markdown([candidate], metadata).decode("utf-8")
 
-    opening = "<pre><code>"
-    start = review.index(opening) + len(opening)
-    end = review.index("</code></pre>", start)
-    encoded_context = review[start:end]
-    assert html.unescape(encoded_context) == candidate["context"]
-    assert encoded_context.startswith("\r\n\n\r")
-    assert encoded_context.endswith("\r\n\n\r\r\n")
-    assert "&amp;raw" in encoded_context
-    assert "&lt;/code&gt;&lt;/pre&gt;&lt;h1&gt;injected&lt;/h1&gt;" in encoded_context
-    assert "<h1>injected</h1>" not in review
+    assert expected_fence in review
+    assert str(candidate["context"]) in review
+    assert expected_fence[0] * 256 not in review
+    assert read_rows(destination)[0]["context"] == original["context"]
+
+
+def test_scan_reports_controlled_error_when_no_safe_review_fence_exists(
+    run_ltc, tmp_path: Path, monkeypatch, capsys
+) -> None:
+    source = tmp_path / "book.txt"
+    destination = tmp_path / "scan"
+    source.write_text("The bell rang at 13:15.\n", encoding="utf-8")
+    assert run_ltc("scan", source, "--output", destination).returncode == 0
+    candidate = candidate_with_context(
+        read_rows(destination)[0],
+        "`" * 255 + "\n" + "~" * 255 + "\nprivate-source-sentinel\n",
+    )
+    rejected_destination = tmp_path / "rejected"
+
+    monkeypatch.setattr(
+        scan_module,
+        "extract_candidates",
+        lambda document, work_metadata: [
+            {**candidate, "workMetadata": dict(work_metadata)}
+        ],
+    )
+    exit_code = main(["scan", str(source), "--output", str(rejected_destination)])
+    captured = capsys.readouterr()
+
+    assert exit_code == 2
+    assert captured.out == ""
+    error = json.loads(captured.err)["error"]
+    assert error["code"] == "review-render-failed"
+    assert error["details"] == {"stage": "review-render"}
+    assert "private-source-sentinel" not in captured.err
+    assert not rejected_destination.exists()
 
 
 def test_review_renderer_rejects_duplicate_candidate_ids(

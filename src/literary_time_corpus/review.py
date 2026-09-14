@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import html
 import re
 import string
 import unicodedata
@@ -35,6 +34,10 @@ CONTROL_WHITESPACE = {
     "\f": r"\f",
     "\r": r"\r",
 }
+
+
+class ReviewRenderError(ValueError):
+    code = "review-render-failed"
 
 
 def _escape_markdown(value: str) -> str:
@@ -82,7 +85,9 @@ def _fenced_text(value: str) -> str:
     elif longest_tilde_run < MAX_FENCE_LENGTH:
         fence = "~" * max(3, longest_tilde_run + 1)
     else:
-        return f"<pre><code>{html.escape(value, quote=False)}</code></pre>"
+        raise ReviewRenderError(
+            "source text cannot be represented with a safe Markdown fence"
+        )
     closing_prefix = "" if value.endswith("\n") else "\n"
     return f"{fence}text\n{value}{closing_prefix}{fence}"
 

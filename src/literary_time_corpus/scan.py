@@ -20,7 +20,7 @@ from literary_time_corpus.io import write_json_atomic, write_jsonl_atomic
 from literary_time_corpus.normalize import NormalizationError, normalize_bytes
 from literary_time_corpus.normalized import normalized_record_violations
 from literary_time_corpus.report import ReportError, build_report
-from literary_time_corpus.review import render_review_markdown
+from literary_time_corpus.review import ReviewRenderError, render_review_markdown
 
 
 SCAN_SCHEMA_VERSION = "scan-run-v1"
@@ -219,9 +219,11 @@ def scan_to_staging(
     except ReportError as error:
         raise ScanError(error.code, str(error), stage="reporting") from error
     write_json_atomic(report_path, report)
-    (staging_path / "review.md").write_bytes(
-        render_review_markdown(candidates, work_metadata)
-    )
+    try:
+        review = render_review_markdown(candidates, work_metadata)
+    except ReviewRenderError as error:
+        raise ScanError(error.code, str(error), stage="review-render") from error
+    (staging_path / "review.md").write_bytes(review)
     run = {
         "bodyBoundary": {
             "endMarker": end_marker,
