@@ -18,9 +18,9 @@ development dependency.
 
 **Public error contract:** A successful command exits `0`. Invalid input or a
 failed invariant exits `2`, writes exactly one JSON object to stderr with
-`error.code`, `error.message`, and optional `error.details`, and does not leave
-the requested output file behind. Unexpected internal failures exit `1` using
-the same envelope with code `internal-error`.
+`error.code`, `error.message`, and optional `error.details`, and does not create
+or modify the requested output on failure. Unexpected internal failures exit
+`1` using the same envelope with code `internal-error`.
 
 ## Task 1: Package shell and deterministic normalization
 
@@ -173,11 +173,12 @@ ltc validate \
 ```
 
 The happy path must emit one deterministic release record. Parameterized
-negative cases must each exit `2` and leave no output for: non-resolved
-precision, zero or multiple normalized minutes, malformed HH:MM, mismatched
-candidate/review identity, non-accepted review, changed human-confirmed time or
-excerpt, inconsistent quote segmentation, invalid offsets or hashes, missing
-jurisdiction, `restricted`/`uncertain` work status, non-eligible edition status,
+negative cases must each exit `2` and not create or modify the output for:
+non-resolved precision, zero or multiple normalized minutes, malformed HH:MM,
+mismatched candidate/review identity, non-accepted review, changed
+human-confirmed time or excerpt, inconsistent quote segmentation, invalid
+offsets or hashes, missing jurisdiction, `restricted`/`uncertain` work status,
+non-eligible edition status,
 non-eligible aggregate decision, unresolved warnings, and target-use profile
 other than `zi5-public-corpus-v1`.
 

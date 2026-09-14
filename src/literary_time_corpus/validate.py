@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import hashlib
+import ipaddress
 import json
 import re
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 from literary_time_corpus.io import write_json_atomic
 
@@ -14,6 +17,8 @@ RELEASE_VERSION = "release-v1"
 TARGET_USE_PROFILE = "zi5-public-corpus-v1"
 SHA256_PATTERN = re.compile(r"[0-9a-f]{64}")
 TIME_PATTERN = re.compile(r"(?:[01][0-9]|2[0-3]):[0-5][0-9]")
+UTC_TIMESTAMP_PATTERN = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z")
+DATE_PATTERN = re.compile(r"\d{4}-\d{2}-\d{2}")
 
 
 class ValidationInputError(ValueError):
@@ -58,6 +63,75 @@ def _nonblank_string_list(value: Any) -> list[str] | None:
     if values is None or any(not item.strip() for item in values):
         return None
     return values
+
+
+def _valid_utc_timestamp(value: Any) -> bool:
+    if not isinstance(value, str) or UTC_TIMESTAMP_PATTERN.fullmatch(value) is None:
+        return False
+    try:
+        datetime.strptime(value, "%Y-%m-%dT%H:%M:%SZ")
+    except ValueError:
+        return False
+    return True
+
+
+def _valid_date(value: Any) -> bool:
+    if not isinstance(value, str) or DATE_PATTERN.fullmatch(value) is None:
+        return False
+    try:
+        return date.fromisoformat(value).isoformat() == value
+    except ValueError:
+        return False
+
+
+def _public_https_url(value: Any) -> bool:
+    if not isinstance(value, str):
+        return False
+    try:
+        parsed = urlsplit(value)
+        hostname = parsed.hostname
+        parsed_port = parsed.port
+    except ValueError:
+        return False
+    if (
+        parsed.scheme != "https"
+        or not hostname
+        or parsed.username is not None
+        or parsed.password is not None
+        or (parsed_port is not None and not 1 <= parsed_port <= 65535)
+    ):
+        return False
+    hostname = hostname.rstrip(".").lower()
+    if (
+        hostname == "localhost"
+        or "." not in hostname
+        or hostname.endswith((".localhost", ".local", ".internal", ".lan", ".home"))
+    ):
+        return False
+    try:
+        if not ipaddress.ip_address(hostname).is_global:
+            return False
+    except ValueError:
+        pass
+    return True
+
+
+def _valid_provenance_url(provenance: Any) -> bool:
+    if not isinstance(provenance, dict):
+        return False
+    url = provenance.get("sourcePageUrl")
+    if not _public_https_url(url):
+        return False
+    if provenance.get("provider") == "Project Gutenberg":
+        item_id = provenance.get("providerItemId")
+        if (
+            not isinstance(item_id, str)
+            or not item_id.isascii()
+            or not item_id.isdigit()
+        ):
+            return False
+        return url == f"https://www.gutenberg.org/ebooks/{item_id}"
+    return True
 
 
 def _offsets(candidate: dict[str, Any]) -> tuple[int, int, int, int] | None:
@@ -177,6 +251,8 @@ def _rights_assessments(
             or not _nonblank_string(assessment.get("decisionDate"))
         ):
             violations.append("incomplete-jurisdiction-assessment")
+        if not _valid_date(assessment.get("decisionDate")):
+            violations.append("invalid-rights-date")
     return valid_objects
 
 
@@ -274,6 +350,8 @@ def _collect_violations(
 
     if review.get("decision") != "accepted":
         violations.append("review-not-accepted")
+    if not _valid_utc_timestamp(review.get("reviewedAt")):
+        violations.append("invalid-review-timestamp")
     if (
         review.get("confirmedPrecision") != candidate.get("precision")
         or review.get("confirmedNormalizedTimes") != candidate.get("normalizedTimes")
@@ -298,6 +376,8 @@ def _collect_violations(
         violations.append("target-use-profile-mismatch")
     if rights.get("policyVersion") != "rights-policy-v1":
         violations.append("rights-policy-version-mismatch")
+    if not _valid_date(rights.get("decisionDate")):
+        violations.append("invalid-rights-date")
 
     required_candidate_strings = (
         "candidateId",
@@ -339,6 +419,8 @@ def _collect_violations(
         for field in ("provider", "providerItemId", "sourcePageUrl")
     ):
         violations.append("invalid-candidate-document")
+    if not _valid_provenance_url(provenance):
+        violations.append("invalid-provenance-url")
     attribution = review.get("attribution")
     if not isinstance(attribution, dict) or any(
         not _nonblank_string(attribution.get(field))

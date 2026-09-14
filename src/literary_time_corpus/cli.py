@@ -140,18 +140,13 @@ def main(argv: Sequence[str] | None = None) -> int:
                 arguments.rights,
             ):
                 validate_normalize_paths(input_path, arguments.output)
-            prior_output = regular_file_identity(arguments.output)
-            try:
-                validate_file(
-                    arguments.analysis,
-                    arguments.candidate,
-                    arguments.review,
-                    arguments.rights,
-                    arguments.output,
-                )
-            except Exception:
-                remove_unchanged_regular_file(arguments.output, prior_output)
-                raise
+            validate_file(
+                arguments.analysis,
+                arguments.candidate,
+                arguments.review,
+                arguments.rights,
+                arguments.output,
+            )
             return 0
         raise CommandError("not-implemented", f"{arguments.command} is not implemented")
     except (

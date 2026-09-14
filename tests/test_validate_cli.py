@@ -372,7 +372,80 @@ def test_validate_release_uses_nested_allowlists(run_ltc, tmp_path: Path) -> Non
     assert "analysisText" not in json.loads(release_text)
 
 
-def test_validate_removes_existing_regular_output_on_failure(run_ltc, tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://www.gutenberg.org/ebooks/117",
+        "https://user:password@www.gutenberg.org/ebooks/117",
+        "https://localhost/ebooks/117",
+        "https://catalog.internal/ebooks/117",
+        "https://192.168.1.8/ebooks/117",
+        "file:///srv/private/117.txt",
+        "https://www.gutenberg.org/ebooks/118",
+        "https://www.gutenberg.org/ebooks/117?token=secret",
+    ],
+)
+def test_validate_rejects_unsafe_or_noncanonical_provenance_urls(
+    run_ltc, tmp_path: Path, url: str
+) -> None:
+    candidate = load_fixture("candidate.json")
+    candidate["provenance"]["sourcePageUrl"] = url
+
+    result, output = run_validate(run_ltc, tmp_path, candidate=candidate)
+
+    assert result.returncode == 2
+    assert not output.exists()
+    assert "invalid-provenance-url" in stderr_error(result)["details"]["violations"]
+
+
+@pytest.mark.parametrize(
+    "reviewed_at",
+    [
+        "2026-09-14T08:00:00+00:00",
+        "2026-09-14T08:00:00.000Z",
+        "2026-02-30T08:00:00Z",
+        "2026-09-14 08:00:00Z",
+        "",
+    ],
+)
+def test_validate_requires_canonical_utc_review_timestamp(
+    run_ltc, tmp_path: Path, reviewed_at: str
+) -> None:
+    review = load_fixture("review.json")
+    review["reviewedAt"] = reviewed_at
+
+    result, output = run_validate(run_ltc, tmp_path, review=review)
+
+    assert result.returncode == 2
+    assert not output.exists()
+    assert "invalid-review-timestamp" in stderr_error(result)["details"]["violations"]
+
+
+@pytest.mark.parametrize(
+    ("path", "value"),
+    [
+        ("decisionDate", "2026-02-30"),
+        ("decisionDate", "2026-9-14"),
+        ("decisionDate", "2026-09-14T00:00:00Z"),
+        ("assessments.0.decisionDate", "2025-02-29"),
+        ("assessments.1.decisionDate", ""),
+    ],
+)
+def test_validate_requires_real_iso_rights_dates(
+    run_ltc, tmp_path: Path, path: str, value: str
+) -> None:
+    rights = mutate_fixture(
+        "rights.json", lambda document: set_path(document, path, value)
+    )
+
+    result, output = run_validate(run_ltc, tmp_path, rights=rights)
+
+    assert result.returncode == 2
+    assert not output.exists()
+    assert "invalid-rights-date" in stderr_error(result)["details"]["violations"]
+
+
+def test_validate_preserves_existing_regular_output_on_failure(run_ltc, tmp_path: Path) -> None:
     candidate = mutate_fixture(
         "candidate.json", lambda document: document.update(precision="approximate")
     )
@@ -380,7 +453,8 @@ def test_validate_removes_existing_regular_output_on_failure(run_ltc, tmp_path: 
     assert result.returncode == 2
     assert not output.exists()
 
-    output.write_text("stale release", encoding="utf-8")
+    prior_release = b'{"prior":"approved release"}\n'
+    output.write_bytes(prior_release)
     result = run_ltc(
         "validate",
         "--analysis",
@@ -395,7 +469,7 @@ def test_validate_removes_existing_regular_output_on_failure(run_ltc, tmp_path: 
         output,
     )
     assert result.returncode == 2
-    assert not output.exists()
+    assert output.read_bytes() == prior_release
 
 
 def test_validate_rejects_output_aliases_without_damaging_inputs(run_ltc, tmp_path: Path) -> None:
