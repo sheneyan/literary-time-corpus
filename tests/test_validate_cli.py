@@ -134,7 +134,7 @@ def test_validate_projects_one_deterministic_release_record(run_ltc, tmp_path: P
         "excerpt": candidate["excerpt"],
         "excerptEndByte": candidate["excerptEndByte"],
         "excerptStartByte": candidate["excerptStartByte"],
-        "extractionVersion": "extract-v1",
+        "extractionVersion": "extract-v2",
         "matchEndByte": candidate["matchEndByte"],
         "matchStartByte": candidate["matchStartByte"],
         "matchedText": candidate["matchedText"],

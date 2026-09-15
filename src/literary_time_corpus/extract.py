@@ -15,7 +15,7 @@ from literary_time_corpus.normalized import normalized_record_violations
 
 
 SCHEMA_VERSION = "time-candidate-v1"
-EXTRACTION_VERSION = "extract-v1"
+EXTRACTION_VERSION = "extract-v2"
 
 
 class ExtractionError(ValueError):
@@ -58,6 +58,7 @@ NUMBER_WORDS = {
 HOUR_WORDS = {word: value for word, value in NUMBER_WORDS.items() if value <= 12}
 NUMBER_PATTERN = "|".join(sorted(NUMBER_WORDS, key=len, reverse=True))
 HOUR_PATTERN = "|".join(sorted(HOUR_WORDS, key=len, reverse=True))
+OCLOCK_HOUR_PATTERN = rf"(?:0?[1-9]|1[0-2]|{HOUR_PATTERN})"
 SCRIPTURE_REFERENCE_BEFORE = re.compile(
     r"\b(?:[1-3]\s*)?(?:"
     r"gen(?:esis)?|exod(?:us)?|lev(?:iticus)?|num(?:bers)?|deut(?:eronomy)?|"
@@ -113,6 +114,11 @@ def _clock(hour: int, minute: int) -> str:
 def _twelve_hour_values(hour: int, minute: int) -> list[str]:
     morning = hour % 12
     return [_clock(morning, minute), _clock(morning + 12, minute)]
+
+
+def _hour_value(token: str) -> int:
+    lowered = token.lower()
+    return HOUR_WORDS[lowered] if lowered in HOUR_WORDS else int(token)
 
 
 def _candidate(
@@ -204,7 +210,9 @@ def extract_candidates(
                 occupied.append((match.start(), match.end()))
 
     approximate = re.compile(
-        rf"\babout\s+({HOUR_PATTERN})\s+o'clock\b", re.IGNORECASE
+        rf"\b(?:about|approximately)\s+({OCLOCK_HOUR_PATTERN})"
+        rf"\s+o['’]clock\b",
+        re.IGNORECASE,
     )
     add_matches(
         approximate,
@@ -212,13 +220,31 @@ def extract_candidates(
             document,
             match,
             rule_family="approximate-clock",
-            rule_id="approx-about-oclock-v1",
+            rule_id="approx-about-oclock-v2",
             normalized_times=[],
             precision="approximate",
             status="automatically-excluded",
             exclusions=["approximate-expression"],
         ),
     )
+
+    oclock_hour = re.compile(
+        rf"\b({OCLOCK_HOUR_PATTERN})\s+o['’]clock\b", re.IGNORECASE
+    )
+
+    def build_oclock_hour(match: re.Match[str]) -> dict[str, Any]:
+        hour = _hour_value(match.group(1))
+        return _candidate(
+            document,
+            match,
+            rule_family="oclock-hour",
+            rule_id="oclock-hour-v1",
+            normalized_times=_twelve_hour_values(hour, 0),
+            precision="exact-minute-ambiguous",
+            warnings=["missing-meridiem"],
+        )
+
+    add_matches(oclock_hour, build_oclock_hour)
 
     approximate_numeric = re.compile(
         r"\b(?:about|approximately)\s+(?:[01]?[0-9]|2[0-3]):[0-5][0-9](?![0-9:]|\s*(?:hours?|minutes?|seconds?)\b)",
