@@ -68,7 +68,7 @@ ALLOWED_REVIEWED_TEXT_FILES = (
     ALLOWED_ROOT_FILES | ALLOWED_DOC_FILES | ALLOWED_SOURCE_FILES | ALLOWED_TEST_FILES
 )
 PRIVATE_KEY_MARKER = re.compile(
-    rb"-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----"
+    rb"-----BEGIN (?:[A-Z0-9][A-Z0-9 -]* )?PRIVATE KEY-----"
 )
 TOKEN_ASSIGNMENT = re.compile(
     rb"(?<![A-Za-z0-9_-])"
@@ -320,6 +320,20 @@ def test_allowed_text_paths_reject_likely_secrets_and_gutenberg_bodies() -> None
     }
 
     assert policy_violations(files) == sorted(files)
+
+
+def test_private_key_filter_covers_pem_private_key_families_only() -> None:
+    private_files = {
+        "README.md": b"-----BEGIN ENCRYPTED " + b"PRIVATE KEY-----\n",
+        "docs/data-model.md": b"-----BEGIN DSA " + b"PRIVATE KEY-----\n",
+    }
+    public_files = {
+        "README.md": b"-----BEGIN " + b"PUBLIC KEY-----\n",
+        "docs/data-model.md": b"-----BEGIN " + b"CERTIFICATE-----\n",
+    }
+
+    assert policy_violations(private_files) == sorted(private_files)
+    assert policy_violations(public_files) == []
 
 
 def test_secret_filter_rejects_unquoted_export_assignment() -> None:
