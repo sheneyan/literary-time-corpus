@@ -340,14 +340,16 @@ def extract_candidates(
 
     add_matches(fraction, build_fraction)
 
-    named = re.compile(r"\b(noon|midnight)\b", re.IGNORECASE)
+    named = re.compile(
+        r"\b(noon|midnight)\b(?!\s+hours?\b)", re.IGNORECASE
+    )
     add_matches(
         named,
         lambda match: _candidate(
             document,
             match,
             rule_family="named-time",
-            rule_id="named-noon-midnight-v1",
+            rule_id="named-noon-midnight-v2",
             normalized_times=["12:00" if match.group(1).lower() == "noon" else "00:00"],
             precision="exact-minute-resolved",
             contextual_resolution={

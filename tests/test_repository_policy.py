@@ -112,7 +112,7 @@ APPROVED_SYNTHETIC_FIXTURE_SHA256 = {
         "5e4fb58e2bad12b054d129295152fba067b6147b7f11e2fcc83799ab511ccfb1"
     ),
     PurePosixPath("tests/fixtures/report/candidates.jsonl"): (
-        "cc58f58af344a7567ba5639a6ba7e1a020b486cd333ae9836e4f0ee45947f46d"
+        "6701450094913a5194dfd644d6b3237d0fa46b85ea675c4a26a8c3c1995c2d0e"
     ),
     PurePosixPath("tests/fixtures/validate/analysis.json"): (
         "8fde7f74b6762f8af60d2e6ff220a3324033a673a28a862637df039238fab541"

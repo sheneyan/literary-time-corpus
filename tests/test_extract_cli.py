@@ -99,6 +99,27 @@ def test_extract_supports_oclock_hours_and_approximate_precedence(
         assert exact["extractionVersion"] == "extract-v2"
 
 
+def test_extract_ignores_named_times_used_as_hour_periods(
+    run_ltc, tmp_path: Path
+) -> None:
+    rows = extract_text(
+        run_ltc,
+        tmp_path,
+        "At noon the synthetic clock rang. During the noon hours it rested. "
+        "In the midnight hour it stirred. At midnight it rang again.\n",
+    )
+
+    assert [row["matchedText"].lower() for row in rows] == [
+        "noon",
+        "midnight",
+    ]
+    assert [row["normalizedTimes"] for row in rows] == [
+        ["12:00"],
+        ["00:00"],
+    ]
+    assert all(row["ruleId"] == "named-noon-midnight-v2" for row in rows)
+
+
 def test_extract_resolves_initial_exact_time_rule_families(run_ltc, tmp_path: Path) -> None:
     _document, rows, _output = extract_fixture(run_ltc, tmp_path)
 
