@@ -36,6 +36,7 @@ ALLOWED_DOC_FILES = {
     PurePosixPath("docs/superpowers/plans/2026-09-15-v0.1-release.md"),
     PurePosixPath("docs/superpowers/specs/2026-09-14-initial-repository-design.md"),
     PurePosixPath("docs/superpowers/specs/2026-09-14-public-txt-scanner-design.md"),
+    PurePosixPath("docs/superpowers/specs/2026-09-15-extract-v2-oclock-design.md"),
     PurePosixPath("docs/superpowers/specs/2026-09-15-v0.1-release-design.md"),
 }
 ALLOWED_SOURCE_FILES = {
