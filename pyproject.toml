@@ -1,0 +1,22 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "literary-time-corpus"
+version = "0.1.0"
+description = "Deterministic tooling for a public-domain literary time corpus"
+requires-python = ">=3.11"
+dependencies = []
+
+[project.scripts]
+ltc = "literary_time_corpus.cli:main"
+
+[dependency-groups]
+dev = ["pytest>=8,<9"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/literary_time_corpus"]

@@ -1,0 +1,19 @@
+{
+  "analysisText": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx钟声响起。At 1:17 a.m., he left.",
+  "analysisTextSha256": "c0e400073bd53d669956a92c9cd1c8b95c86dd650ea999ce51773d0c7c9592a4",
+  "bodyEndByte": 137,
+  "bodyStartByte": 0,
+  "normalizationVersion": "normalize-v1",
+  "schemaVersion": "normalized-source-v1",
+  "sourceId": "local_aaaaaaaaaaaa",
+  "sourceSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "transformationLog": [
+    {
+      "inputEndByte": 137,
+      "inputStartByte": 0,
+      "method": "full-file-selection",
+      "outputEndByte": 137,
+      "outputStartByte": 0
+    }
+  ]
+}

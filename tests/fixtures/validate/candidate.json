@@ -1,0 +1,38 @@
+{
+  "analysisTextSha256": "c0e400073bd53d669956a92c9cd1c8b95c86dd650ea999ce51773d0c7c9592a4",
+  "candidateId": "0ecdc8f2b852bb33a43b7912f4f8d4e902a45cb5260fba288c4303b981dcb824",
+  "context": "钟声响起。At 1:17 a.m., he left.",
+  "contextualResolution": {
+    "evidenceEndByte": 127,
+    "evidenceStartByte": 123,
+    "evidenceText": "a.m.",
+    "method": "explicit-meridiem"
+  },
+  "excerpt": "钟声响起。At 1:17 a.m., he left.",
+  "excerptEndByte": 137,
+  "excerptStartByte": 100,
+  "exclusionReasonCodes": [],
+  "extractionVersion": "extract-v1",
+  "matchEndByte": 127,
+  "matchStartByte": 118,
+  "matchedText": "1:17 a.m.",
+  "normalizationVersion": "normalize-v1",
+  "normalizedTimes": ["01:17"],
+  "precision": "exact-minute-resolved",
+  "provenance": {
+    "provider": "Project Gutenberg",
+    "providerItemId": "117",
+    "sourcePageUrl": "https://www.gutenberg.org/ebooks/117"
+  },
+  "quoteAfter": ", he left.",
+  "quoteBefore": "钟声响起。At ",
+  "quoteTime": "1:17 a.m.",
+  "ruleFamily": "numeric-12-hour",
+  "ruleId": "numeric-12h-meridiem-v1",
+  "schemaVersion": "time-candidate-v1",
+  "sourceId": "local_aaaaaaaaaaaa",
+  "sourceHashStatus": "carried-from-normalization",
+  "sourceSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "status": "awaiting-review",
+  "warningReasonCodes": []
+}
