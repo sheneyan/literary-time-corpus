@@ -5,12 +5,10 @@ per-record provenance and rights evidence.
 
 ## Status
 
-This project is in its feasibility-pilot stage. The Gate 2 command-line
-pipeline is implemented and locally verified against synthetic fixtures only.
-It does not yet acquire Project Gutenberg ebooks or publish a quote corpus. The
-next empirical milestone is to measure how much of a 1,440-minute day can be
-covered by eligible English-language source texts, how reliably exact time
-expressions can be extracted, and how much human review is required.
+Literary Time Corpus v0.1.0 provides an offline, provider-neutral TXT scanner
+for extracting literary time candidates from user-supplied UTF-8 text. It does
+not acquire books or publish a quotation corpus. The command-line pipeline is
+verified against repository-owned synthetic fixtures only.
 
 ## Principles
 
@@ -25,16 +23,14 @@ expressions can be extracted, and how much human review is required.
 
 ## Current scope
 
-The initial pilot will use a bounded allowlist of English-language works from
-Project Gutenberg. It will use documented catalog and bulk-access facilities,
-retain source identifiers and hashes, and keep acquisition, analysis, review,
-and release artifacts separate. Discovery uses a local RDF metadata copy;
-acquisition caches only the exact approved UTF-8 text paths rather than mirroring
-every ebook format or every file ending in `.txt`.
+The public tool scans one local UTF-8 TXT file and writes deterministic analysis
+artifacts for machine processing and human review. Project Gutenberg is one
+possible external source of eligible text, but it is not a dependency or
+Provider implemented by this repository. Source discovery, acquisition, and
+rights screening remain external responsibilities.
 
-The project will not ingest Project Gutenberg at scale, publish unreviewed
-excerpts, fill missing minutes with approximate text, or implement the
-Literature Clock user interface during the pilot.
+The project does not publish unreviewed excerpts, fill missing minutes with
+approximate text, or implement the Literature Clock user interface.
 
 Passing the current test suite is evidence about the synthetic pipeline; it
 authorizes neither ebook acquisition nor publication. Those actions remain
@@ -136,12 +132,24 @@ absolute path or source text.
 
 ### Installation
 
-Python 3.11 or newer is required. For the current source checkout, install the
-locked development environment and prefix commands with `uv run`:
+The v0.1.0 release was manually verified on macOS 26.5, Apple Silicon (`arm64`),
+Python 3.11.16, and uv 0.10.0. Python 3.11 is the minimum runtime requirement.
+Other operating systems, architectures, and Python versions are untested, not
+unsupported.
+
+For the current source checkout, install the locked development environment and
+prefix commands with `uv run`:
 
 ```bash
 uv sync --locked
 uv run ltc scan book.txt --output book-scan
+```
+
+Install the v0.1.0 wheel directly from its GitHub Release:
+
+```bash
+python3 -m pip install \
+  https://github.com/sheneyan/literary-time-corpus/releases/download/v0.1.0/literary_time_corpus-0.1.0-py3-none-any.whl
 ```
 
 To install the current wheel in another environment:

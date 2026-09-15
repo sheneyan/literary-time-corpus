@@ -33,8 +33,10 @@ ALLOWED_DOC_FILES = {
         "docs/superpowers/plans/2026-09-14-mirror-and-jurisdiction-policy.md"
     ),
     PurePosixPath("docs/superpowers/plans/2026-09-14-public-txt-scanner.md"),
+    PurePosixPath("docs/superpowers/plans/2026-09-15-v0.1-release.md"),
     PurePosixPath("docs/superpowers/specs/2026-09-14-initial-repository-design.md"),
     PurePosixPath("docs/superpowers/specs/2026-09-14-public-txt-scanner-design.md"),
+    PurePosixPath("docs/superpowers/specs/2026-09-15-v0.1-release-design.md"),
 }
 ALLOWED_SOURCE_FILES = {
     PurePosixPath("src/literary_time_corpus/__init__.py"),
@@ -234,6 +236,28 @@ def test_public_documentation_matches_local_scanner_path_and_identity_contract()
     assert "synthetic `sourceId`" not in data_model
     assert re.search(r"synthetic\s+source-ID", data_model) is None
     assert "### Future Project Gutenberg source snapshot" in data_model
+
+
+def test_readme_describes_v010_release_and_verified_environment() -> None:
+    readme = (REPOSITORY_ROOT / "README.md").read_text(encoding="utf-8")
+    normalized_readme = " ".join(readme.split())
+
+    assert "offline, provider-neutral TXT scanner" in normalized_readme
+    assert "macOS 26.5" in normalized_readme
+    assert "Apple Silicon (`arm64`)" in normalized_readme
+    assert "Python 3.11.16" in normalized_readme
+    assert "uv 0.10.0" in normalized_readme
+    assert (
+        "Other operating systems, architectures, and Python versions are "
+        "untested" in normalized_readme
+    )
+    assert (
+        "releases/download/v0.1.0/"
+        "literary_time_corpus-0.1.0-py3-none-any.whl" in normalized_readme
+    )
+    assert (
+        "Project Gutenberg is one possible external source" in normalized_readme
+    )
 
 
 def test_tracked_repository_content_satisfies_boundary_policy() -> None:
