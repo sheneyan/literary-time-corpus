@@ -9,7 +9,7 @@ from literary_time_corpus.normalized import NORMALIZATION_VERSION
 
 
 CANDIDATE_SCHEMA_VERSION = "time-candidate-v1"
-EXTRACTION_VERSION = "extract-v1"
+EXTRACTION_VERSION = "extract-v2"
 WORK_METADATA_SCHEMA_VERSION = "scan-work-metadata-v1"
 TIME_PATTERN = re.compile(r"(?:[01][0-9]|2[0-3]):[0-5][0-9]")
 SHA256_PATTERN = re.compile(r"[0-9a-f]{64}")

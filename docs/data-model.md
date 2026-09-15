@@ -27,7 +27,7 @@ The CLI currently emits or accepts these schema and version fields:
 | Record | `schemaVersion` | Additional version fields |
 | --- | --- | --- |
 | normalized source | `normalized-source-v1` | `normalizationVersion=normalize-v1` |
-| candidate | `time-candidate-v1` | `extractionVersion=extract-v1`; carries `normalizationVersion` |
+| candidate | `time-candidate-v1` | `extractionVersion=extract-v2`; carries `normalizationVersion` |
 | review input | `time-review-v1` | human-supplied review metadata |
 | rights input | `rights-decision-v1` | `policyVersion=rights-policy-v1`; `targetUseProfile=zi5-public-corpus-v1` |
 | release projection | `time-release-v1` | `releaseVersion=release-v1`; carries normalization, extraction, and rights-policy versions |
@@ -72,7 +72,7 @@ top-level properties:
   "status": "complete",
   "toolVersions": {
     "candidateSchemaVersion": "time-candidate-v1",
-    "extractionVersion": "extract-v1",
+    "extractionVersion": "extract-v2",
     "normalizationVersion": "normalize-v1",
     "normalizedSchemaVersion": "normalized-source-v1",
     "reportSchemaVersion": "candidate-report-v1",

@@ -218,7 +218,7 @@ The implemented record and tool versions are:
 | Artifact | Schema version | Tool or policy version |
 | --- | --- | --- |
 | normalized source | `normalized-source-v1` | `normalizationVersion=normalize-v1` |
-| time candidate | `time-candidate-v1` | `extractionVersion=extract-v1`; carries `normalizationVersion` |
+| time candidate | `time-candidate-v1` | `extractionVersion=extract-v2`; carries `normalizationVersion` |
 | human review input | `time-review-v1` | human-supplied review metadata |
 | rights input | `rights-decision-v1` | `policyVersion=rights-policy-v1`; `targetUseProfile=zi5-public-corpus-v1` |
 | release projection | `time-release-v1` | `releaseVersion=release-v1`; carries normalization, extraction, and rights-policy versions |

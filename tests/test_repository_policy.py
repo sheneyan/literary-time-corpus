@@ -33,9 +33,11 @@ ALLOWED_DOC_FILES = {
         "docs/superpowers/plans/2026-09-14-mirror-and-jurisdiction-policy.md"
     ),
     PurePosixPath("docs/superpowers/plans/2026-09-14-public-txt-scanner.md"),
+    PurePosixPath("docs/superpowers/plans/2026-09-15-extract-v2-oclock.md"),
     PurePosixPath("docs/superpowers/plans/2026-09-15-v0.1-release.md"),
     PurePosixPath("docs/superpowers/specs/2026-09-14-initial-repository-design.md"),
     PurePosixPath("docs/superpowers/specs/2026-09-14-public-txt-scanner-design.md"),
+    PurePosixPath("docs/superpowers/specs/2026-09-15-extract-v2-oclock-design.md"),
     PurePosixPath("docs/superpowers/specs/2026-09-15-v0.1-release-design.md"),
 }
 ALLOWED_SOURCE_FILES = {
@@ -110,13 +112,13 @@ APPROVED_SYNTHETIC_FIXTURE_SHA256 = {
         "5e4fb58e2bad12b054d129295152fba067b6147b7f11e2fcc83799ab511ccfb1"
     ),
     PurePosixPath("tests/fixtures/report/candidates.jsonl"): (
-        "c1c4834297224e14b253c1ca913d9b31093a791e419368dddacb015146edbecb"
+        "6701450094913a5194dfd644d6b3237d0fa46b85ea675c4a26a8c3c1995c2d0e"
     ),
     PurePosixPath("tests/fixtures/validate/analysis.json"): (
         "8fde7f74b6762f8af60d2e6ff220a3324033a673a28a862637df039238fab541"
     ),
     PurePosixPath("tests/fixtures/validate/candidate.json"): (
-        "f6391199b7314847e9c94cb25678fddc85372fd4b29c65084c77e07580561578"
+        "9fecf5149804933fcfc8e0be6a2a8b453e96d69b18debab79ef69c524eb02b9e"
     ),
     PurePosixPath("tests/fixtures/validate/review.json"): (
         "8622d876cc7ec23d4aaf00c33bcec01d905746215ed02ffadb27925fbb6e8d3e"

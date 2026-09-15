@@ -27,6 +27,25 @@ def extract_fixture(run_ltc, tmp_path: Path) -> tuple[dict[str, object], list[di
     return document, rows, output.read_bytes()
 
 
+def extract_text(run_ltc, tmp_path: Path, text: str) -> list[dict[str, object]]:
+    source = tmp_path / "source.txt"
+    normalized = tmp_path / "normalized.json"
+    output = tmp_path / "candidates.jsonl"
+    source.write_text(text, encoding="utf-8")
+    normalized_result = run_ltc(
+        "normalize", "--input", source, "--output", normalized
+    )
+    assert normalized_result.returncode == 0, normalized_result.stderr
+    extract_result = run_ltc(
+        "extract", "--input", normalized, "--output", output
+    )
+    assert extract_result.returncode == 0, extract_result.stderr
+    return [
+        json.loads(line)
+        for line in output.read_text(encoding="utf-8").splitlines()
+    ]
+
+
 def candidate_by_text(rows: list[dict[str, object]], text: str) -> dict[str, object]:
     matches = [row for row in rows if row["matchedText"] == text]
     assert len(matches) == 1, (text, matches)
@@ -43,6 +62,62 @@ def expected_candidate_id(candidate: dict[str, object]) -> str:
         ]
     )
     return hashlib.sha256(identity.encode("utf-8")).hexdigest()
+
+
+def test_extract_supports_oclock_hours_and_approximate_precedence(
+    run_ltc, tmp_path: Path
+) -> None:
+    rows = extract_text(
+        run_ltc,
+        tmp_path,
+        "About 8 o'Clock, the synthetic bell was silent. "
+        "At eleven o'Clock it rang. At 7 o’clock it rang again. "
+        "Approximately twelve o’clock, the synthetic test ended.\n",
+    )
+
+    assert [row["matchedText"] for row in rows] == [
+        "About 8 o'Clock",
+        "eleven o'Clock",
+        "7 o’clock",
+        "Approximately twelve o’clock",
+    ]
+    first, eleven, seven, last = rows
+    for approximate in (first, last):
+        assert approximate["precision"] == "approximate"
+        assert approximate["status"] == "automatically-excluded"
+        assert approximate["normalizedTimes"] == []
+        assert approximate["exclusionReasonCodes"] == [
+            "approximate-expression"
+        ]
+        assert approximate["ruleId"] == "approx-about-oclock-v2"
+    assert eleven["normalizedTimes"] == ["11:00", "23:00"]
+    assert seven["normalizedTimes"] == ["07:00", "19:00"]
+    for exact in (eleven, seven):
+        assert exact["precision"] == "exact-minute-ambiguous"
+        assert exact["warningReasonCodes"] == ["missing-meridiem"]
+        assert exact["ruleId"] == "oclock-hour-v1"
+        assert exact["extractionVersion"] == "extract-v2"
+
+
+def test_extract_ignores_named_times_used_as_hour_periods(
+    run_ltc, tmp_path: Path
+) -> None:
+    rows = extract_text(
+        run_ltc,
+        tmp_path,
+        "At noon the synthetic clock rang. During the noon hours it rested. "
+        "In the midnight hour it stirred. At midnight it rang again.\n",
+    )
+
+    assert [row["matchedText"].lower() for row in rows] == [
+        "noon",
+        "midnight",
+    ]
+    assert [row["normalizedTimes"] for row in rows] == [
+        ["12:00"],
+        ["00:00"],
+    ]
+    assert all(row["ruleId"] == "named-noon-midnight-v2" for row in rows)
 
 
 def test_extract_resolves_initial_exact_time_rule_families(run_ltc, tmp_path: Path) -> None:
@@ -233,7 +308,7 @@ def test_extract_emits_exact_utf8_offsets_ids_context_and_segmentation(
         assert candidate["analysisTextSha256"] == document["analysisTextSha256"]
         assert candidate["normalizationVersion"] == document["normalizationVersion"]
         assert candidate["schemaVersion"] == "time-candidate-v1"
-        assert candidate["extractionVersion"] == "extract-v1"
+        assert candidate["extractionVersion"] == "extract-v2"
         assert candidate["ruleId"]
         assert candidate["context"] == candidate["excerpt"]
         assert candidate["quoteBefore"] + candidate["quoteTime"] + candidate["quoteAfter"] == candidate["excerpt"]

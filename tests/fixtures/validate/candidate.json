@@ -12,7 +12,7 @@
   "excerptEndByte": 137,
   "excerptStartByte": 100,
   "exclusionReasonCodes": [],
-  "extractionVersion": "extract-v1",
+  "extractionVersion": "extract-v2",
   "matchEndByte": 127,
   "matchStartByte": 118,
   "matchedText": "1:17 a.m.",

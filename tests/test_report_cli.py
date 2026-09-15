@@ -7,7 +7,7 @@ import pytest
 
 
 FIXTURE = Path(__file__).parent / "fixtures" / "report" / "candidates.jsonl"
-FIXTURE_SHA256 = "c1c4834297224e14b253c1ca913d9b31093a791e419368dddacb015146edbecb"
+FIXTURE_SHA256 = "6701450094913a5194dfd644d6b3237d0fa46b85ea675c4a26a8c3c1995c2d0e"
 
 
 def first_candidate() -> dict[str, object]:

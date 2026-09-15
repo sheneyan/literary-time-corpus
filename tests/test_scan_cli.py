@@ -178,7 +178,7 @@ def test_scan_run_manifest_has_exact_shape_and_binds_final_artifacts(
     assert run["bodySelection"] == {"mode": "full-file"}
     assert run["toolVersions"] == {
         "candidateSchemaVersion": "time-candidate-v1",
-        "extractionVersion": "extract-v1",
+        "extractionVersion": "extract-v2",
         "normalizationVersion": "normalize-v1",
         "normalizedSchemaVersion": "normalized-source-v1",
         "reportSchemaVersion": "candidate-report-v1",
